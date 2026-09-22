@@ -17,7 +17,8 @@ namespace FishingFun
         private List<ConsoleKey> tenMinKey;
         private IBobberFinder bobberFinder;
         private IBiteWatcher biteWatcher;
-        private bool isEnabled;
+        private volatile bool isEnabled = true;
+        private Rectangle captureBounds;
         private Stopwatch stopwatch = new Stopwatch();
         private static Random random = new Random();
 
@@ -39,29 +40,52 @@ namespace FishingFun
         {
             biteWatcher.FishingEventHandler = (e) => FishingEventHandler?.Invoke(this, e);
 
-            isEnabled = true;
-
-            DoTenMinuteKey();
+            bool initialKeysPending = true;
+            bool waitingForWindow = false;
 
             while (isEnabled)
             {
                 try
                 {
-                    logger.Info($"Pressing key {castKey} to Cast.");
-
+                    captureBounds = WowScreen.GetCaptureBounds();
+                    if (captureBounds.IsEmpty)
+                    {
+                        if (!waitingForWindow) { logger.Info("Paused: bring the WoW window to the foreground to resume."); }
+                        waitingForWindow = true;
+                        bobberFinder.Reset();
+                        Thread.Sleep(100);
+                        continue;
+                    }
+                    if (waitingForWindow) { logger.Info("WoW window ready; resuming."); }
+                    waitingForWindow = false;
+                    if (initialKeysPending)
+                    {
+                        DoTenMinuteKey();
+                        initialKeysPending = false;
+                    }
                     PressTenMinKeyIfDue();
 
                     FishingEventHandler?.Invoke(this, new FishingEvent { Action = FishingAction.Cast });
+                    EnsureWindowUnchanged();
+                    (bobberFinder as ICastAwareBobberFinder)?.PrepareForCast();
+                    EnsureWindowUnchanged();
+                    logger.Info($"Sending cast key {castKey}.");
                     WowProcess.PressKey(castKey);
 
                     Watch(2000);
 
                     WaitForBite();
                 }
+                catch (OperationCanceledException e)
+                {
+                    bobberFinder.Reset();
+                    if (isEnabled) { logger.Info("Detection paused/restarted: " + e.Message); }
+                    Thread.Sleep(100);
+                }
                 catch (Exception e)
                 {
                     logger.Error(e.ToString());
-                    Sleep(2000);
+                    for (int i = 0; i < 20 && isEnabled; i++) { Thread.Sleep(100); }
                 }
             }
 
@@ -78,9 +102,11 @@ namespace FishingFun
             bobberFinder.Reset();
             stopwatch.Reset();
             stopwatch.Start();
-            while (stopwatch.ElapsedMilliseconds < milliseconds)
+            while (isEnabled && stopwatch.ElapsedMilliseconds < milliseconds)
             {
+                EnsureWindowUnchanged();
                 bobberFinder.Find();
+                Thread.Sleep(30);
             }
             stopwatch.Stop();
         }
@@ -98,6 +124,7 @@ namespace FishingFun
             var bobberPosition = FindBobber();
             if (bobberPosition == Point.Empty)
             {
+                if (isEnabled) { logger.Warn("No new bobber detected after the cast key. Check the fishing key binding and the preview; retrying."); }
                 return;
             }
 
@@ -111,11 +138,11 @@ namespace FishingFun
             while (isEnabled)
             {
                 var currentBobberPosition = FindBobber();
-                if (currentBobberPosition == Point.Empty || currentBobberPosition.X == 0) { return; }
+                if (currentBobberPosition == Point.Empty) { return; }
 
                 if (this.biteWatcher.IsBite(currentBobberPosition))
                 {
-                    Loot(bobberPosition);
+                    Loot(currentBobberPosition);
                     PressTenMinKeyIfDue();
                     return;
                 }
@@ -149,13 +176,15 @@ namespace FishingFun
 
             if (tenMinKey.Count == 0)
             {
-                logger.Info($"Ten Minute Key:  No keys defined in tenMinKey, so nothing to do (Define in call to FishingBot constructor).");
+                logger.Info("Extra macro keys are disabled.");
+                return;
             }
 
             FishingEventHandler?.Invoke(this, new FishingEvent { Action = FishingAction.Cast });
 
             foreach (var key in tenMinKey)
             {
+                EnsureWindowUnchanged();
                 logger.Info($"Ten Minute Key: Pressing key {key} to run a macro, delete junk fish or apply a lure etc.");
                 WowProcess.PressKey(key);
             }
@@ -163,8 +192,18 @@ namespace FishingFun
 
         private void Loot(Point bobberPosition)
         {
+            EnsureWindowUnchanged();
             logger.Info($"Right clicking mouse to Loot.");
-            WowProcess.RightClickMouse(logger, bobberPosition);
+            WowProcess.RightClickMouse(logger, bobberPosition, () =>
+                isEnabled && WowScreen.GetCaptureBounds() == captureBounds);
+        }
+
+        private void EnsureWindowUnchanged()
+        {
+            if (!isEnabled || WowScreen.GetCaptureBounds() != captureBounds)
+            {
+                throw new OperationCanceledException(isEnabled ? "WoW lost focus or its capture area changed." : "Stop requested.");
+            }
         }
 
         public static void Sleep(int ms)
@@ -201,11 +240,15 @@ namespace FishingFun
         {
             var timer = new TimedAction((a) => { logger.Info("Waited seconds for target: " + a.ElapsedSecs); }, 1000, 5);
 
-            while (true)
+            while (isEnabled)
             {
+                EnsureWindowUnchanged();
                 var target = this.bobberFinder.Find();
+                EnsureWindowUnchanged();
+                Thread.Sleep(30);
                 if (target != Point.Empty || !timer.ExecuteIfDue()) { return target; }
             }
+            return Point.Empty;
         }
     }
 }

@@ -10,7 +10,8 @@ namespace FishingFun
 
     public class BobberBitmapEvent : EventArgs
     {
-        public Bitmap Bitmap { get; set; } = new Bitmap(1, 1);
+        // Borrowed for the duration of the event; consumers must copy it if they retain it.
+        public Bitmap Bitmap { get; set; } = null!;
         public Point Point { get; set; }
     }
 

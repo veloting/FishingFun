@@ -4,6 +4,8 @@
     {
         bool IsMatch(byte red, byte green, byte blue);
 
+        bool IsMatch(byte red, byte green, byte blue, PixelClassifier.ClassifierMode mode);
+
         double ColourMultiplier { get; set; }
 
         double ColourClosenessMultiplier { get; set; }

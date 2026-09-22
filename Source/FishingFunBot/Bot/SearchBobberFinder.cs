@@ -1,142 +1,225 @@
 ﻿using log4net;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 
 #nullable enable
 namespace FishingFun
 {
-    public class SearchBobberFinder : IBobberFinder, IImageProvider
+    public class SearchBobberFinder : IBobberFinder, IImageProvider, ICastAwareBobberFinder
     {
+        private const int MaxColourPoints = 1000;
+        private const int ConfirmationFrames = 3;
         private readonly IPixelClassifier pixelClassifier;
-
-        private static ILog logger = LogManager.GetLogger("Fishbot");
+        private static readonly ILog logger = LogManager.GetLogger("Fishbot");
 
         private Point previousLocation;
+        private Rectangle previousBounds;
+        private PixelClassifier.ClassifierMode previousMode;
+        private PixelClassifier.ClassifierMode? pendingColour;
+        private Point pendingLocation;
+        private int stableFrames;
+        private byte[,]? preCastColours;
+        private Rectangle preCastBounds;
 
-        private Bitmap bitmap = new Bitmap(1, 1);
-
+        public PixelClassifier.ClassifierMode? DetectedColour { get; private set; }
         public event EventHandler<BobberBitmapEvent> BitmapEvent;
 
         public SearchBobberFinder(IPixelClassifier pixelClassifier)
         {
             this.pixelClassifier = pixelClassifier;
+            previousMode = pixelClassifier.Mode;
             BitmapEvent += (s, e) => { };
         }
 
         public void Reset()
         {
-            this.previousLocation = Point.Empty;
+            previousLocation = Point.Empty;
+            DetectedColour = null;
+            pendingColour = null;
+            stableFrames = 0;
+            previousMode = pixelClassifier.Mode;
+        }
+
+        public void PrepareForCast()
+        {
+            using var frame = WowScreen.GetBitmap(out var bounds);
+            PrepareForCast(frame, bounds);
+        }
+
+        public void PrepareForCast(Bitmap frame, Rectangle bounds)
+        {
+            if (frame.Size != bounds.Size) { throw new ArgumentException("Frame size must match capture bounds.", nameof(bounds)); }
+            Reset();
+            preCastBounds = bounds;
+            preCastColours = null;
+            if (pixelClassifier.Mode != PixelClassifier.ClassifierMode.Auto) { return; }
+            var colours = new byte[frame.Width, frame.Height];
+            for (int x = 0; x < frame.Width; x++)
+            {
+                for (int y = 0; y < frame.Height; y++)
+                {
+                    var pixel = frame.GetPixel(x, y);
+                    if (pixelClassifier.IsMatch(pixel.R, pixel.G, pixel.B, PixelClassifier.ClassifierMode.Red)) { colours[x, y] |= 1; }
+                    if (pixelClassifier.IsMatch(pixel.R, pixel.G, pixel.B, PixelClassifier.ClassifierMode.Blue)) { colours[x, y] |= 2; }
+                }
+            }
+            preCastColours = colours;
         }
 
         public Point Find()
         {
-            this.bitmap = WowScreen.GetBitmap();
+            using var frame = WowScreen.GetBitmap(out var bounds);
+            return Find(frame, bounds);
+        }
 
-            Score? best = Score.ScorePoints(FindRedPoints());
-
-            if (previousLocation != Point.Empty && best == null)
+        // The caller owns the frame. Also supports replaying saved frames without WoW.
+        public Point Find(Bitmap frame, Rectangle bounds)
+        {
+            if (frame.Size != bounds.Size) { throw new ArgumentException("Frame size must match capture bounds.", nameof(bounds)); }
+            if (preCastColours != null && bounds != preCastBounds)
             {
-                previousLocation = Point.Empty;
-                best = Score.ScorePoints(FindRedPoints());
+                throw new OperationCanceledException("Capture area moved after the pre-cast frame.");
+            }
+            var mode = pixelClassifier.Mode;
+            if (mode != previousMode)
+            {
+                Reset();
+                // A different feather has a different Y position: reset the bite baseline too.
+                throw new OperationCanceledException("Feather mode changed; restart detection.");
+            }
+            if (bounds != previousBounds) { Reset(); }
+            previousBounds = bounds;
+
+            bool automatic = mode == PixelClassifier.ClassifierMode.Auto;
+            var searchMode = automatic ? DetectedColour ?? mode : mode;
+            var wholeFrame = new Rectangle(Point.Empty, frame.Size);
+            var searchArea = previousLocation == Point.Empty ? wholeFrame :
+                Rectangle.Intersect(wholeFrame, new Rectangle(previousLocation.X - 40, previousLocation.Y - 40, 80, 80));
+
+            var best = FindCandidate(frame, searchArea, searchMode, automatic);
+            if (best == null && previousLocation != Point.Empty && !automatic)
+            {
+                best = FindCandidate(frame, wholeFrame, searchMode, false);
             }
 
-            previousLocation = Point.Empty;
+            Point location = Point.Empty;
             if (best != null)
             {
-                previousLocation = best.point;
-            }
-
-            BitmapEvent?.Invoke(this, new BobberBitmapEvent { Point = new Point(previousLocation.X, previousLocation.Y), Bitmap = this.bitmap });
-
-            this.bitmap.Dispose();
-
-            return previousLocation == Point.Empty ? Point.Empty : WowScreen.GetScreenPositionFromBitmapPostion(previousLocation);
-        }
-
-        private List<Score> FindRedPoints()
-        {
-            var points = new List<Score>();
-
-            var hasPreviousLocation = previousLocation != Point.Empty;
-
-            // search around last found location
-            var minX = Math.Max(hasPreviousLocation ? previousLocation.X - 40 : 0, 0);
-            var maxX = Math.Min(hasPreviousLocation ? previousLocation.X + 40 : this.bitmap.Width, this.bitmap.Width);
-            var minY = Math.Max(hasPreviousLocation ? previousLocation.Y - 40 : 0, 0);
-            var maxY = Math.Min(hasPreviousLocation ? previousLocation.Y + 40 : this.bitmap.Height, this.bitmap.Height);
-
-            //System.Diagnostics.Debug.WriteLine($"Search from X {minX}-{maxX}, Y {minY}-{maxY}");
-
-            Stopwatch sw = new Stopwatch();
-            sw.Start();
-
-            for (int x = minX; x < maxX; x++)
-            {
-                for (int y = minY; y < maxY; y++)
+                if (automatic && DetectedColour == null)
                 {
-                    ProcessPixel(points, x, y);
-                }
-            }
-            sw.Stop();
-
-            if (sw.ElapsedMilliseconds > 200)
-            {
-                var prevText = hasPreviousLocation ? " using previous location" : "";
-                Debug.WriteLine($"Feather points found: {points.Count} in {sw.ElapsedMilliseconds}{prevText}.");
-            }
-
-            if (points.Count>1000)
-            {
-                logger.Error("Error: Too much of the feather colour in this image, please adjust the colour configuration !");
-                points.Clear();
-            }
-
-            return points;
-        }
-
-        private void ProcessPixel(List<Score> points, int x, int y)
-        {
-            var p = this.bitmap.GetPixel(x, y);
-
-            bool isMatch = this.pixelClassifier.IsMatch(p.R, p.G, p.B);
-
-            if (isMatch)
-            {
-                points.Add(new Score { point = new Point(x, y) });
-                this.bitmap.SetPixel(x, y, this.pixelClassifier.Mode == PixelClassifier.ClassifierMode.Blue ? Color.Blue : Color.Red);
-            }
-        }
-
-        private class Score
-        {
-            public Point point;
-            public int count = 0;
-
-            public static Score? ScorePoints(List<Score> points)
-            {
-                foreach (Score p in points)
-                {
-                    p.count = points.Where(s => Math.Abs(s.point.X - p.point.X) < 10) // + or - 10 pixels horizontally
-                        .Where(s => Math.Abs(s.point.Y - p.point.Y) < 10) // + or - 10 pixels vertically
-                        .Count();
-                }
-
-                var best = points.OrderByDescending(s => s.count).FirstOrDefault();
-
-                if (best != null)
-                {
-                    //System.Diagnostics.Debug.WriteLine($"best score: {best.count} at {best.point.X},{best.point.Y}");
+                    if (pendingColour == best.Colour && Math.Abs(best.Point.X - pendingLocation.X) <= 10 &&
+                        Math.Abs(best.Point.Y - pendingLocation.Y) <= 10)
+                    {
+                        stableFrames++;
+                    }
+                    else
+                    {
+                        stableFrames = 1;
+                    }
+                    pendingColour = best.Colour;
+                    pendingLocation = best.Point;
+                    if (stableFrames >= ConfirmationFrames)
+                    {
+                        DetectedColour = best.Colour;
+                        logger.Info($"Auto feather: locked {DetectedColour}.");
+                        location = best.Point;
+                    }
                 }
                 else
                 {
-                    System.Diagnostics.Debug.WriteLine("No red found");
+                    DetectedColour = best.Colour;
+                    location = best.Point;
                 }
-
-                return best;
             }
+            else
+            {
+                pendingColour = null;
+                stableFrames = 0;
+            }
+
+            // Keep the local area and colour when a locked feather disappears.
+            // The next cast calls Reset, instead of jumping to another object during bite detection.
+            if (location != Point.Empty || !automatic) { previousLocation = location; }
+
+            BitmapEvent?.Invoke(this, new BobberBitmapEvent { Point = location, Bitmap = frame });
+            return location == Point.Empty ? Point.Empty : WowScreen.GetScreenPositionFromBitmapPostion(location, bounds);
+        }
+
+        private Candidate? FindCandidate(Bitmap frame, Rectangle area, PixelClassifier.ClassifierMode mode, bool automatic)
+        {
+            var redPoints = new List<Point>();
+            var bluePoints = new List<Point>();
+            for (int x = area.Left; x < area.Right; x++)
+            {
+                for (int y = area.Top; y < area.Bottom; y++)
+                {
+                    var pixel = frame.GetPixel(x, y);
+                    if (mode != PixelClassifier.ClassifierMode.Blue && redPoints.Count <= MaxColourPoints &&
+                        pixelClassifier.IsMatch(pixel.R, pixel.G, pixel.B, PixelClassifier.ClassifierMode.Red) &&
+                        (!automatic || !WasPresentBeforeCast(x, y, 1)))
+                    {
+                        redPoints.Add(new Point(x, y));
+                    }
+                    if (mode != PixelClassifier.ClassifierMode.Red && bluePoints.Count <= MaxColourPoints &&
+                        pixelClassifier.IsMatch(pixel.R, pixel.G, pixel.B, PixelClassifier.ClassifierMode.Blue) &&
+                        (!automatic || !WasPresentBeforeCast(x, y, 2)))
+                    {
+                        bluePoints.Add(new Point(x, y));
+                    }
+                }
+            }
+
+            var red = Score(redPoints, PixelClassifier.ClassifierMode.Red, automatic);
+            var blue = Score(bluePoints, PixelClassifier.ClassifierMode.Blue, automatic);
+            var best = red == null ? blue : blue == null ? red : red.Confidence >= blue.Confidence ? red : blue;
+
+            // Score original pixels before adding preview highlights.
+            if (best != null)
+            {
+                var points = best.Colour == PixelClassifier.ClassifierMode.Red ? redPoints : bluePoints;
+                var colour = best.Colour == PixelClassifier.ClassifierMode.Red ? Color.Red : Color.Blue;
+                foreach (var point in points) { frame.SetPixel(point.X, point.Y, colour); }
+            }
+            return best;
+        }
+
+        private bool WasPresentBeforeCast(int x, int y, byte colour)
+        {
+            if (preCastColours == null) { return false; }
+            // Allow a one-pixel edge variation without treating stationary scenery as a new feather.
+            for (int px = Math.Max(0, x - 1); px <= Math.Min(preCastColours.GetLength(0) - 1, x + 1); px++)
+            {
+                for (int py = Math.Max(0, y - 1); py <= Math.Min(preCastColours.GetLength(1) - 1, y + 1); py++)
+                {
+                    if ((preCastColours[px, py] & colour) != 0) { return true; }
+                }
+            }
+            return false;
+        }
+
+        private static Candidate? Score(List<Point> points, PixelClassifier.ClassifierMode colour, bool automatic)
+        {
+            // Reject broad areas (e.g. lava or blue water) independently for each colour.
+            if (points.Count == 0 || points.Count > MaxColourPoints) { return null; }
+            Point best = Point.Empty;
+            int bestCount = 0;
+            foreach (var point in points)
+            {
+                int count = points.Count(other => Math.Abs(other.X - point.X) < 10 && Math.Abs(other.Y - point.Y) < 10);
+                if (count > bestCount) { best = point; bestCount = count; }
+            }
+            if (automatic && bestCount < 4) { return null; }
+            // Prefer a dense cluster over the same number of scattered pixels.
+            return new Candidate { Point = best, Colour = colour, Confidence = (double)bestCount * bestCount / points.Count };
+        }
+
+        private sealed class Candidate
+        {
+            public Point Point;
+            public PixelClassifier.ClassifierMode Colour;
+            public double Confidence;
         }
     }
 }

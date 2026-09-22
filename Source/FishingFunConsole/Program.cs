@@ -21,17 +21,18 @@ namespace Powershell
                 Console.WriteLine("Blue mode");
                 pixelClassifier.Mode = PixelClassifier.ClassifierMode.Blue;
             }
+            else if (args.Contains("red"))
+            {
+                pixelClassifier.Mode = PixelClassifier.ClassifierMode.Red;
+            }
 
             pixelClassifier.SetConfiguration(WowProcess.IsWowClassic());
 
             var bobberFinder = new SearchBobberFinder(pixelClassifier);
             var biteWatcher = new PositionBiteWatcher(strikeValue);
 
-            var bot = new FishingBot(bobberFinder, biteWatcher, ConsoleKey.D4, new List<ConsoleKey> { ConsoleKey.D5 });
+            var bot = new FishingBot(bobberFinder, biteWatcher, ConsoleKey.D4, new List<ConsoleKey>());
             bot.FishingEventHandler += (b, e) => LogManager.GetLogger("Fishbot").Info(e);
-
-            WowProcess.PressKey(ConsoleKey.Spacebar);
-            System.Threading.Thread.Sleep(1500);
 
             bot.Start();
         }

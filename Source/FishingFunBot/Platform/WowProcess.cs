@@ -28,20 +28,19 @@ namespace FishingFun
         }
 
         //Get the wow-process, if success returns the process else null
-        public static Process? Get(string name = "")
+        public static Process? Get(string name = "", bool logMissing = true)
         {
             var names = string.IsNullOrEmpty(name) ? new List<string> { "Wow", "WowClassic", "Wow-64" } : new List<string> { name };
 
-            var processList = Process.GetProcesses();
-            foreach (var p in processList)
+            foreach (var processName in names)
             {
-                if (names.Select(s => s.ToLower()).Contains(p.ProcessName.ToLower()))
-                {
-                    return p;
-                }
+                var matches = Process.GetProcessesByName(processName);
+                if (matches.Length == 0) { continue; }
+                for (int i = 1; i < matches.Length; i++) { matches[i].Dispose(); }
+                return matches[0];
             }
 
-            logger.Error($"Failed to find the wow process, tried: {string.Join(", ", names)}");
+            if (logMissing) { logger.Error($"Failed to find the wow process, tried: {string.Join(", ", names)}"); }
 
             return null;
         }
@@ -80,10 +79,73 @@ namespace FishingFun
 
         public static void PressKey(ConsoleKey key)
         {
-            KeyDown(key);
-            Thread.Sleep(50 + random.Next(0, 75));
-            KeyUp(key);
+            using (var process = Get())
+            {
+                var window = process?.MainWindowHandle ?? IntPtr.Zero;
+                if (window == IntPtr.Zero || GetForegroundWindow() != window)
+                {
+                    throw new OperationCanceledException("WoW must be in the foreground before sending a key.");
+                }
+                // Do not turn a plain fishing key into Shift/Ctrl/Alt + key while the user switches windows.
+                if (IsKeyHeld(0x10) || IsKeyHeld(0x11) || IsKeyHeld(0x12) || IsKeyHeld(0x5B) || IsKeyHeld(0x5C) || IsKeyHeld((int)key))
+                {
+                    throw new OperationCanceledException("Release held keys before automatic casting.");
+                }
+                uint scan = MapVirtualKey((uint)key, 4);
+                if (scan == 0) { throw new ArgumentException("No scan code is available for " + key, nameof(key)); }
+                uint flags = 0x0008u | ((scan & 0xFF00) == 0xE000 ? 0x0001u : 0u);
+                if (GetForegroundWindow() != window) { throw new OperationCanceledException("WoW lost focus before casting."); }
+                SendKeyboardInput((ushort)(scan & 0xFF), flags);
+                try { Thread.Sleep(50 + random.Next(0, 75)); }
+                finally { SendKeyboardInput((ushort)(scan & 0xFF), flags | 0x0002u); }
+                logger.Info($"Keyboard input sent for {key}; waiting for a new bobber (casting is not yet confirmed).");
+            }
         }
+
+        private static bool IsKeyHeld(int key) => (GetAsyncKeyState(key) & 0x8000) != 0;
+
+        private static void SendKeyboardInput(ushort scanCode, uint flags)
+        {
+            var input = new NativeInput
+            {
+                Type = 1,
+                Data = new InputData { Keyboard = new KeyboardInput { ScanCode = scanCode, Flags = flags } }
+            };
+            if (SendInput(1, new[] { input }, Marshal.SizeOf(typeof(NativeInput))) != 1)
+            {
+                int error = Marshal.GetLastWin32Error();
+                throw new InvalidOperationException($"Keyboard input was not inserted (Win32={error}). Check that WoW and this app run on the same desktop and at the same privilege level.");
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeInput { public uint Type; public InputData Data; }
+        [StructLayout(LayoutKind.Explicit)]
+        private struct InputData
+        {
+            [FieldOffset(0)] public KeyboardInput Keyboard;
+            [FieldOffset(0)] public MouseInput Mouse;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct KeyboardInput
+        {
+            public ushort VirtualKey, ScanCode;
+            public uint Flags, Time;
+            public UIntPtr ExtraInfo;
+        }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct MouseInput
+        {
+            public int X, Y;
+            public uint MouseData, Flags, Time;
+            public UIntPtr ExtraInfo;
+        }
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern uint SendInput(uint count, NativeInput[] inputs, int size);
+        [DllImport("user32.dll")]
+        private static extern uint MapVirtualKey(uint code, uint mapType);
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int key);
 
         public static void KeyUp(ConsoleKey key)
         {
@@ -98,10 +160,10 @@ namespace FishingFun
         [return: MarshalAs(UnmanagedType.Bool)]
         private static extern bool SetCursorPos(int x, int y);
 
-        public static void RightClickMouse(ILog logger, System.Drawing.Point position)
+        public static void RightClickMouse(ILog logger, System.Drawing.Point position, Func<bool>? canContinue = null)
         {
             //RightClickMouse_Original(logger, position);
-            RightClickMouse_LiamCooper(logger, position);
+            RightClickMouse_LiamCooper(logger, position, canContinue);
         }
 
         public static void RightClickMouse_Original(ILog logger, System.Drawing.Point position)
@@ -153,25 +215,49 @@ namespace FishingFun
             }
         }
 
-        public static void RightClickMouse_LiamCooper(ILog logger, System.Drawing.Point position)
+        public static void RightClickMouse_LiamCooper(ILog logger, System.Drawing.Point position, Func<bool>? canContinue = null)
         {
-            var activeProcess = GetActiveProcess();
-            var wowProcess = WowProcess.Get();
-            if (wowProcess != null)
+            using (WowScreen.UsePhysicalPixels())
+            using (var wowProcess = WowProcess.Get())
             {
-                mouse_event((int)MouseEventFlags.RightUp, position.X, position.Y, 0, 0);
-                var oldPosition = System.Windows.Forms.Cursor.Position;
+                if (wowProcess == null) { return; }
+                var window = wowProcess.MainWindowHandle;
+                var bounds = WowScreen.GetCaptureBounds();
+                bool CanClick() => (canContinue == null || canContinue()) &&
+                    !bounds.IsEmpty && bounds.Contains(position) &&
+                    WowScreen.GetCaptureBounds() == bounds && GetForegroundWindow() == window &&
+                    GetAncestor(WindowFromPoint(position), 2) == window;
 
-                Thread.Sleep(200);
-                System.Windows.Forms.Cursor.Position = position;
-                Thread.Sleep(LootDelay);
-                mouse_event((int)MouseEventFlags.RightDown, position.X, position.Y, 0, 0);
-                Thread.Sleep(30 + random.Next(0, 47));
-                mouse_event((int)MouseEventFlags.RightUp, position.X, position.Y, 0, 0);
-                RefocusOnOldScreen(logger, activeProcess, wowProcess, oldPosition);
-                Thread.Sleep(LootDelay / 2);
+                if (!CanClick()) { return; }
+                if (!WaitForLootDelay(200, CanClick)) { return; }
+                SetCursorPos(position.X, position.Y);
+                if (!WaitForLootDelay(LootDelay, CanClick)) { return; }
+                // The user can move the mouse while waiting; position it again immediately before clicking.
+                SetCursorPos(position.X, position.Y);
+                if (!CanClick()) { return; }
+                mouse_event((int)MouseEventFlags.RightDown, 0, 0, 0, 0);
+                try { Thread.Sleep(30 + random.Next(0, 47)); }
+                finally { mouse_event((int)MouseEventFlags.RightUp, 0, 0, 0, 0); }
+                WaitForLootDelay(LootDelay / 2, CanClick);
             }
         }
+
+        private static bool WaitForLootDelay(int milliseconds, Func<bool> canContinue)
+        {
+            var timer = Stopwatch.StartNew();
+            while (timer.ElapsedMilliseconds < milliseconds)
+            {
+                if (!canContinue()) { return false; }
+                Thread.Sleep(30);
+            }
+            return canContinue();
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr WindowFromPoint(System.Drawing.Point point);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetAncestor(IntPtr window, uint flags);
 
         private static void RefocusOnOldScreen(ILog logger, Process activeProcess, Process wowProcess, System.Drawing.Point oldPosition)
         {

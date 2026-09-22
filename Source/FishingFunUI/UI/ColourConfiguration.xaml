@@ -61,11 +61,11 @@
             <Button Click="Capture_Click" Content="Capture Screen"  Width="150" Height="30" Margin="123,20,123,10" />
             <StackPanel Grid.Row="1" Orientation="Horizontal">
                 <Label Margin="0 11 0 0">Watch Feather:</Label>
-                <ComboBox Name="cmbColors" SelectionChanged="cmbColors_SelectionChanged" Width="100" Margin="10 0 0 0">
+                <ComboBox Name="cmbColors" SelectedValuePath="Mode" SelectionChanged="cmbColors_SelectionChanged" Width="100" Margin="10 0 0 0" ToolTip="Auto selects a stable red or blue feather for each cast.">
                     <ComboBox.ItemTemplate>
                         <DataTemplate>
                             <StackPanel Orientation="Horizontal">
-                                <Rectangle Fill="{Binding Name}" Width="16" Height="16" Margin="0,2,5,2" />
+                                <Rectangle Fill="{Binding Swatch}" Width="16" Height="16" Margin="0,2,5,2" />
                                 <TextBlock Text="{Binding Name}" />
                             </StackPanel>
                         </DataTemplate>

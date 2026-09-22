@@ -50,7 +50,11 @@ namespace FishingFun
             this.WindowSizeChangedTimer = new Timer { AutoReset = false, Interval = 100 };
             this.WindowSizeChangedTimer.Elapsed += SizeChangedTimer_Elapsed;
             this.CardGrid.SizeChanged += MainWindow_SizeChanged;
-            this.Closing += (s, e) => botThread?.Abort();
+            this.Closing += (s, e) =>
+            {
+                bot?.Stop();
+                WindowSizeChangedTimer.Stop();
+            };
 
             this.KeyChooser.CastKeyChanged += (s, e) =>
             {
@@ -148,11 +152,10 @@ namespace FishingFun
         {
             if (bot == null)
             {
-                WowProcess.PressKey(ConsoleKey.Spacebar);
-                System.Threading.Thread.Sleep(1500);
-
                 SetButtonStates(false);
-                botThread = new System.Threading.Thread(new System.Threading.ThreadStart(this.BotThread));
+                bot = new FishingBot(bobberFinder, this.biteWatcher, KeyChooser.CastKey, new List<ConsoleKey>());
+                bot.FishingEventHandler += FishingEventHandler;
+                botThread = new System.Threading.Thread(new System.Threading.ThreadStart(this.BotThread)) { IsBackground = true };
                 botThread.Start();
 
                 // Hide cards after 10 minutes
@@ -164,22 +167,22 @@ namespace FishingFun
 
         public void BotThread()
         {
-            bot = new FishingBot(bobberFinder, this.biteWatcher, KeyChooser.CastKey, new List<ConsoleKey> { ConsoleKey.D5, ConsoleKey.D6 });
-            bot.FishingEventHandler += FishingEventHandler;
-            bot.Start();
-
-            bot = null;
-            SetButtonStates(true);
+            try { bot?.Start(); }
+            finally
+            {
+                bot = null;
+                SetButtonStates(true);
+            }
         }
 
         private void ImageProvider_BitmapEvent(object sender, BobberBitmapEvent e)
         {
-            Dispatch(() =>
+            // The finder owns the bitmap; finish copying it before returning to the capture thread.
+            Application.Current?.Dispatcher.Invoke(() =>
             {
                 SetBackgroundImageColour(e);
                 reticleDrawer.Draw(e.Bitmap, e.Point);
                 var bitmapImage = e.Bitmap.ToBitmapImage();
-                e.Bitmap.Dispose();
                 this.Screenshot.Source = bitmapImage;
             });
         }
@@ -195,6 +198,7 @@ namespace FishingFun
 
         private void Dispatch(Action action)
         {
+            if (Application.Current == null || Application.Current.Dispatcher.HasShutdownStarted) { return; }
             Application.Current?.Dispatcher.BeginInvoke((Action)(() => action()));
             Application.Current?.Dispatcher.Invoke(System.Windows.Threading.DispatcherPriority.Background, new Action(delegate { }));
         }

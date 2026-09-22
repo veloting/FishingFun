@@ -5,7 +5,8 @@
         public enum ClassifierMode
         {
             Red,
-            Blue
+            Blue,
+            Auto
         }
     }
 }

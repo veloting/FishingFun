@@ -6,7 +6,7 @@ namespace FishingFun
     public class BobberColourPointFinder : IBobberFinder, IImageProvider
     {
         private Color targetColor;
-        private Bitmap bmp = new Bitmap(1, 1);
+        private Bitmap bmp = null!;
 
         public BobberColourPointFinder(Color targetColor)
         {
@@ -18,7 +18,8 @@ namespace FishingFun
 
         public Point Find()
         {
-            this.bmp = WowScreen.GetBitmap();
+            using var frame = WowScreen.GetBitmap(out var bounds);
+            this.bmp = frame;
 
             const int targetOffset = 15;
 
@@ -51,13 +52,12 @@ namespace FishingFun
                         colorAt.G < targetGreenHb)
                     {
                         BitmapEvent?.Invoke(this, new BobberBitmapEvent { Point = new Point(i, j), Bitmap = bmp });
-                        return WowScreen.GetScreenPositionFromBitmapPostion(pos);
+                        return WowScreen.GetScreenPositionFromBitmapPostion(pos, bounds);
                     }
                 }
             }
 
             BitmapEvent?.Invoke(this, new BobberBitmapEvent { Point = Point.Empty, Bitmap = bmp });
-            bmp.Dispose();
             return Point.Empty;
         }
 

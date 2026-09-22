@@ -11,18 +11,17 @@ namespace FishingFun
         public double ColourClosenessMultiplier { get; set; } = 2.0;
 
         public bool IsMatch(byte red, byte green, byte blue)
+            => IsMatch(red, green, blue, Mode);
+
+        public bool IsMatch(byte red, byte green, byte blue, ClassifierMode mode)
         {
-            if (Mode == ClassifierMode.Red)
-            {
-                return isBigger(red, green) && isBigger(red, blue) && areClose(blue, green);
-            }
-            else
-            {
-                return isBigger(blue, green) && isBigger(blue, red) && areClose(red, green);
-            }
+            bool matchesRed = isBigger(red, green) && isBigger(red, blue) && areClose(blue, green);
+            bool matchesBlue = isBigger(blue, green) && isBigger(blue, red) && areClose(red, green);
+            return mode == ClassifierMode.Auto ? matchesRed || matchesBlue :
+                mode == ClassifierMode.Red ? matchesRed : matchesBlue;
         }
 
-        public ClassifierMode Mode { get; set; } = ClassifierMode.Red;
+        public ClassifierMode Mode { get; set; } = ClassifierMode.Auto;
 
         public void SetConfiguration(bool isWowClasic)
         {

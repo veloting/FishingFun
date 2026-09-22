@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 
 #nullable enable
 namespace FishingFun
@@ -41,13 +42,10 @@ namespace FishingFun
 
         public bool IsBite(Point currentBobberPosition)
         {
-            if (!yPositions.Contains(currentBobberPosition.Y))
-            {
-                yPositions.Add(currentBobberPosition.Y);
-                yPositions.Sort();
-            }
-
-            yDiff = yPositions[(int)((((double)yPositions.Count) + 0.5) / 2)] - currentBobberPosition.Y;
+            // Compare against earlier samples: adding the current dip first can erase the bite.
+            var baseline = yPositions.OrderBy(y => y).ToArray();
+            if (baseline.Length == 0) { Reset(currentBobberPosition); return false; }
+            yDiff = baseline[(baseline.Length - 1) / 2] - currentBobberPosition.Y;
 
             bool thresholdReached = yDiff <= -strikeValue;
 
@@ -65,6 +63,9 @@ namespace FishingFun
                 }
                 return true;
             }
+
+            yPositions.Add(currentBobberPosition.Y);
+            if (yPositions.Count > 30) { yPositions.RemoveAt(0); }
 
             return false;
         }

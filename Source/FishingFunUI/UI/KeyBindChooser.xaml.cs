@@ -9,7 +9,7 @@ namespace FishingFun
     {
         public ConsoleKey CastKey { get; set; } = ConsoleKey.D4;
 
-        private static string Filename = "keybind.txt";
+        private static readonly string Filename = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "keybind.txt");
 
         public EventHandler CastKeyChanged;
 
@@ -28,9 +28,10 @@ namespace FishingFun
                 if (File.Exists(Filename))
                 {
                     var contents = File.ReadAllText(Filename);
-                    CastKey = (ConsoleKey)int.Parse(contents);
-                    KeyBind.Text = GetCastKeyText(this.CastKey);
+                    var configuredKey = (ConsoleKey)int.Parse(contents);
+                    if (Enum.IsDefined(typeof(ConsoleKey), configuredKey)) { CastKey = configuredKey; }
                 }
+                KeyBind.Text = GetCastKeyText(this.CastKey);
             }
             catch (Exception e)
             {
@@ -47,7 +48,7 @@ namespace FishingFun
 
         private void CastKey_Focus(object sender, RoutedEventArgs e)
         {
-            KeyBind.Text = "";
+            KeyBind.SelectAll();
         }
 
         private void KeyBind_KeyUp(object sender, System.Windows.Input.KeyEventArgs e)
@@ -61,15 +62,16 @@ namespace FishingFun
             if (!string.IsNullOrEmpty(key))
             {
                 ConsoleKey ck;
-                if (Enum.TryParse<ConsoleKey>(key, out ck))
+                if (Enum.TryParse<ConsoleKey>(key, out ck) && Enum.IsDefined(typeof(ConsoleKey), ck))
                 {
                     this.CastKey = ck;
+                    KeyBind.Text = GetCastKeyText(ck);
                     WriteConfiguration();
                     CastKeyChanged?.Invoke(this, null);
                     return;
                 }
             }
-            KeyBind.Text = "";
+            KeyBind.Text = GetCastKeyText(this.CastKey);
         }
 
         private string GetCastKeyText(ConsoleKey ck)
@@ -80,7 +82,7 @@ namespace FishingFun
             {
                 return keyText.Substring(1, 1);
             }
-            return "?";
+            return keyText;
         }
     }
 }

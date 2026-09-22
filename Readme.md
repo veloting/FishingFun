@@ -45,17 +45,21 @@ If you want run a version without a GUI you need to set the startup project in v
 * Turn off Click to move (Esc, Interface Options, Mouse, Uncheck Click to move)
 * Make sure 'Right Click' loots.
 * Put the cast fishing Button on poistion 4 of your Action Bar. I.e. when 4 is clicked fishing will cast.
+* The bot sends only the configured fishing key by default; the old automatic 5/6 macro keys are disabled. Keyboard input is sent through Windows `SendInput` while WoW is foreground. A successful input log means Windows accepted the key events, not that the game successfully cast; the bot then looks for a new bobber. Input failures are logged instead of silently proceeding.
 * Zoom in completely so your character is not visible.
 * Make sure the fishing float is in the middle of the screen.
 * Fish at close to ground level as you can, not off docks or other high places.
-* It requires that WOW is running Full screen (not windowed) on the primary screen. It needs the wow screen to be on top. So it probably won't work well if you only have one screen. If you need it windowed then I suggest you look at the code in this fork: https://github.com/petrvecera/FishingFun
-* Sometimes you may need to adjust the colour parameters for the bobber finder, such as during evening time or if there is a lot of red in the landscape.
+* Fullscreen, borderless, and ordinary windowed mode are supported. The search area follows the middle of the WoW client area, including on secondary monitors. Keep the bobber inside the screenshot preview's search area and leave that area unobstructed.
+* After clicking Play, switch back to WoW. The bot pauses while WoW is minimized, not in the foreground, or its search area is off-screen, and resumes when the window is ready. Moving or resizing the game restarts detection to avoid treating window movement as a bite. This is screen capture, so minimized/background fishing is not supported.
+* Feather colour defaults to **Auto**: red and blue candidates are scored separately and a compact cluster must remain stable for three frames before it is tracked. The selected colour stays locked until detection is reset for a new cast; a missing feather does not trigger a switch to the other colour during bite detection. The log reports the selected colour.
+* Before each cast, Auto records existing red/blue scenery and excludes it when finding the new bobber. Keep the camera still during this comparison. A stationary coloured object alone is not proof that the fishing key worked.
+* Auto handles red/blue feather selection, not arbitrary bobber appearances or automatic lighting calibration. For difficult lighting or similarly coloured scenery, use the colour settings to fine-tune thresholds or select Red/Blue manually. The console also defaults to Auto; pass `red` or `blue` to override it.
 
 ----
 
 ## Fishing in Lava
 
-To get the 'Fire Ammonite Angler' achievement you need to fish in Lava. Lava is red making it impossible to see the red feather, so you need to switch to the blue feather. On the main page click the orange configuration button, then change the 'Watch Feather' combo from Red to 'Blue'
+In lava, the red background can obscure the red feather. Auto rejects overly broad colour matches separately for red and blue, allowing it to select the blue feather. If the scene remains ambiguous, open the orange configuration button and set 'Watch Feather' to 'Blue'.
 
 Use a macro like this on your fishing key:
 

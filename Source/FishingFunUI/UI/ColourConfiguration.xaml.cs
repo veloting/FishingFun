@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
-using System.Reflection;
 
 namespace FishingFun
 {
@@ -50,8 +49,13 @@ namespace FishingFun
 
             this.DataContext = this;
 
-            cmbColors.ItemsSource = typeof(System.Windows.Media.Colors).GetProperties().Where(p => new List<string> { "Red", "Blue" }.Contains(p.Name));
-            cmbColors.SelectedIndex = this.pixelClassifier.Mode==PixelClassifier.ClassifierMode.Blue?0: 1;
+            cmbColors.ItemsSource = new[]
+            {
+                new { Name = "Auto", Swatch = "Gray", Mode = PixelClassifier.ClassifierMode.Auto },
+                new { Name = "Red", Swatch = "Red", Mode = PixelClassifier.ClassifierMode.Red },
+                new { Name = "Blue", Swatch = "Blue", Mode = PixelClassifier.ClassifierMode.Blue }
+            };
+            cmbColors.SelectedValue = this.pixelClassifier.Mode;
             LootDelay.Value = WowProcess.LootDelay;
         }
 
@@ -86,7 +90,7 @@ namespace FishingFun
 
             if (ScreenCapture == null)
             {
-                ScreenCapture = WowScreen.GetBitmap();
+                ScreenCapture = WowScreen.GetBitmap(out _, requireForeground: false);
                 renderMatchedArea = true;
             }
 
@@ -119,7 +123,10 @@ namespace FishingFun
                     var pixel = bmp.GetPixel(x, y);
                     if (this.pixelClassifier.IsMatch(pixel.R, pixel.G, pixel.B))
                     {
-                        bmp.SetPixel(x, y, this.pixelClassifier.Mode == PixelClassifier.ClassifierMode.Blue ? Color.Blue : Color.Red);
+                        bool blue = this.pixelClassifier.Mode == PixelClassifier.ClassifierMode.Blue ||
+                            (this.pixelClassifier.Mode == PixelClassifier.ClassifierMode.Auto &&
+                            !this.pixelClassifier.IsMatch(pixel.R, pixel.G, pixel.B, PixelClassifier.ClassifierMode.Red));
+                        bmp.SetPixel(x, y, blue ? Color.Blue : Color.Red);
                     }
                 }
             }
@@ -159,6 +166,13 @@ namespace FishingFun
 
         public void UpdateColourText()
         {
+            if (pixelClassifier.Mode == PixelClassifier.ClassifierMode.Auto)
+            {
+                this.LabelColourMultiplier.Text = "Auto: choose a stable red or blue feather for each cast.";
+                this.LabelColourClosenessMultiplier.Text = "Colour sliders are optional fine-tuning if detection fails.";
+                this.ColourLabel.Content = "Red:";
+                return;
+            }
             this.LabelColourMultiplier.Text = $"{PrimaryColor} multiplied by {this.pixelClassifier.ColourMultiplier} must be greater than green and {SecondaryColor}.";
             this.LabelColourClosenessMultiplier.Text = $"How close green and {SecondaryColor} need to be to each other: {this.pixelClassifier.ColourClosenessMultiplier}";
             this.ColourLabel.Content = PrimaryColor + ":";
@@ -171,8 +185,17 @@ namespace FishingFun
 
         private void Capture_Click(object sender, System.Windows.RoutedEventArgs e)
         {
-            ScreenCapture = WowScreen.GetBitmap();
-            RenderColour(true);
+            try
+            {
+                var capture = WowScreen.GetBitmap(out _, requireForeground: false);
+                ScreenCapture.Dispose();
+                ScreenCapture = capture;
+                RenderColour(true);
+            }
+            catch (OperationCanceledException)
+            {
+                System.Windows.MessageBox.Show(this, "请先打开 WoW，恢复游戏窗口，并确保识别区域在屏幕内且没有被遮挡。", "无法截取游戏画面");
+            }
         }
 
         private void Dispatch(Action action)
@@ -183,30 +206,13 @@ namespace FishingFun
 
         private void cmbColors_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
-            if (cmbColors.SelectedItem != null)
+            if (cmbColors.SelectedValue is PixelClassifier.ClassifierMode mode)
             {
-                var propertyInfo = cmbColors.SelectedItem as PropertyInfo;
-                var item = propertyInfo?.GetValue(null, null);
-                if (item != null)
-                {
-                    var selectedColor = (System.Windows.Media.Color)item;
-
-                    if (propertyInfo?.Name == "Red")
-                    {
-                        PrimaryColor = "Red";
-                        SecondaryColor = "blue";
-                        this.pixelClassifier.Mode = PixelClassifier.ClassifierMode.Red;
-                    }
-                    else
-                    {
-                        PrimaryColor = "Blue";
-                        SecondaryColor = "red";
-                        this.pixelClassifier.Mode = PixelClassifier.ClassifierMode.Blue;
-                    }
-
-                    UpdateColourText();
-                    RenderColour(true);
-                }
+                this.pixelClassifier.Mode = mode;
+                PrimaryColor = mode == PixelClassifier.ClassifierMode.Blue ? "Blue" : "Red";
+                SecondaryColor = mode == PixelClassifier.ClassifierMode.Blue ? "red" : "blue";
+                UpdateColourText();
+                RenderColour(true);
             }
         }
     }
