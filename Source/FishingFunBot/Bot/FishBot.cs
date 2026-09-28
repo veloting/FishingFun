@@ -28,6 +28,10 @@ namespace FishingFun
         private DateTime nextRotationStatus;
         public event Action<string>? RotationStatusChanged;
         public event Action<int>? RotationCharacterChanged;
+        private int castAttempt;
+        private int missingBobbers;
+        private int lockedBobbers;
+        private readonly Stopwatch castElapsed = new Stopwatch();
 
         public event EventHandler<FishingEvent> FishingEventHandler;
 
@@ -55,6 +59,7 @@ namespace FishingFun
 
             bool initialKeysPending = true;
             bool waitingForWindow = false;
+            logger.Info($"Fishing session started: castKey={castKey}, lootDelayMs={WowProcess.LootDelay}.");
 
             while (isEnabled)
             {
@@ -87,7 +92,9 @@ namespace FishingFun
                     EnsureWindowUnchanged();
                     (bobberFinder as ICastAwareBobberFinder)?.PrepareForCast();
                     EnsureWindowUnchanged();
-                    logger.Info($"Sending cast key {castKey}.");
+                    castAttempt++;
+                    castElapsed.Restart();
+                    logger.Info($"Sending cast key {castKey}. Attempt={castAttempt}, captureBounds={captureBounds}.");
                     WowProcess.PressKey(castKey);
 
                     Watch(2000);
@@ -110,7 +117,7 @@ namespace FishingFun
             }
 
             activeFishingTime.Stop();
-            logger.Error("Bot has Stopped.");
+            logger.Info($"Bot has Stopped. Attempts={castAttempt}, bobberLocks={lockedBobbers}, noBobberTimeouts={missingBobbers} (not catch counts).");
         }
 
         private bool PrepareRotation()
@@ -174,6 +181,7 @@ namespace FishingFun
 
         public void SetCastKey(ConsoleKey castKey)
         {
+            logger.Info($"Cast key changed: {this.castKey} -> {castKey}.");
             this.castKey = castKey;
         }
 
@@ -204,13 +212,18 @@ namespace FishingFun
             var bobberPosition = FindBobber();
             if (bobberPosition == Point.Empty)
             {
-                if (isEnabled) { logger.Warn("No new bobber detected after the cast key. Check the fishing key binding and the preview; retrying."); }
+                if (isEnabled)
+                {
+                    missingBobbers++;
+                    logger.Warn($"No new bobber detected after the cast key. Attempt={castAttempt}, elapsedMs={castElapsed.ElapsedMilliseconds}. Check the fishing key binding and the preview; retrying.");
+                }
                 return;
             }
 
             this.biteWatcher.Reset(bobberPosition);
 
-            logger.Info("Bobber start position: " + bobberPosition);
+            lockedBobbers++;
+            logger.Info($"Bobber start position: {bobberPosition}. Attempt={castAttempt}, elapsedMs={castElapsed.ElapsedMilliseconds}.");
 
             var timedTask = new TimedAction((a) => { logger.Info("Fishing timed out!"); }, 25 * 1000, 25);
 
@@ -218,7 +231,11 @@ namespace FishingFun
             while (isEnabled)
             {
                 var currentBobberPosition = FindBobber();
-                if (currentBobberPosition == Point.Empty) { return; }
+                if (currentBobberPosition == Point.Empty)
+                {
+                    if (isEnabled) { logger.Warn($"Lost tracked bobber: attempt={castAttempt}, elapsedMs={castElapsed.ElapsedMilliseconds}; returning to casting."); }
+                    return;
+                }
 
                 if (this.biteWatcher.IsBite(currentBobberPosition))
                 {
@@ -273,7 +290,7 @@ namespace FishingFun
         private void Loot(Point bobberPosition)
         {
             EnsureWindowUnchanged();
-            logger.Info($"Right clicking mouse to Loot.");
+            logger.Info($"Loot requested: attempt={castAttempt}, position={bobberPosition}, castElapsedMs={castElapsed.ElapsedMilliseconds}. Click and catch not yet confirmed.");
             WowProcess.RightClickMouse(logger, bobberPosition, () =>
                 isEnabled && WowScreen.GetCaptureBounds() == captureBounds);
         }

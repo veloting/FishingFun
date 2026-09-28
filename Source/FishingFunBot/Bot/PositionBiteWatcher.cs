@@ -56,6 +56,7 @@ namespace FishingFun
 
             if (thresholdReached)
             {
+                logger.Info($"Bite threshold reached: baselineY={baseline[(baseline.Length - 1) / 2]}, current={currentBobberPosition}, downwardPixels={-yDiff}, threshold={strikeValue}, baselineSamples={baseline.Length}.");
                 RaiseEvent(new FishingEvent { Action = FishingAction.Loot });
                 if (timer != null)
                 {

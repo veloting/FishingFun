@@ -217,6 +217,11 @@ namespace FishingFun
 
         public static void RightClickMouse_LiamCooper(ILog logger, System.Drawing.Point position, Func<bool>? canContinue = null)
         {
+            var clickTimer = Stopwatch.StartNew();
+            bool inputIssued = false;
+            string stage = "find WoW process";
+            try
+            {
             using (WowScreen.UsePhysicalPixels())
             using (var wowProcess = WowProcess.Get())
             {
@@ -228,9 +233,12 @@ namespace FishingFun
                     WowScreen.GetCaptureBounds() == bounds && GetForegroundWindow() == window &&
                     GetAncestor(WindowFromPoint(position), 2) == window;
 
+                stage = "validate foreground, target bounds and window under cursor";
                 if (!CanClick()) { return; }
+                stage = "initial 200ms wait";
                 if (!WaitForLootDelay(200, CanClick)) { return; }
                 SetCursorPos(position.X, position.Y);
+                stage = "configured loot delay";
                 if (!WaitForLootDelay(LootDelay, CanClick)) { return; }
                 // The user can move the mouse while waiting; position it again immediately before clicking.
                 SetCursorPos(position.X, position.Y);
@@ -238,7 +246,14 @@ namespace FishingFun
                 mouse_event((int)MouseEventFlags.RightDown, 0, 0, 0, 0);
                 try { Thread.Sleep(30 + random.Next(0, 47)); }
                 finally { mouse_event((int)MouseEventFlags.RightUp, 0, 0, 0, 0); }
+                inputIssued = true;
+                logger.Info($"Loot mouse input issued: position={position}, elapsedMs={clickTimer.ElapsedMilliseconds}, configuredDelayMs={LootDelay}. Game pickup is not confirmed.");
                 WaitForLootDelay(LootDelay / 2, CanClick);
+            }
+            }
+            finally
+            {
+                if (!inputIssued) { logger.Warn($"Loot click not issued: stage={stage}, position={position}, elapsedMs={clickTimer.ElapsedMilliseconds}; check stop state, foreground and capture bounds."); }
             }
         }
 

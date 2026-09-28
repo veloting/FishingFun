@@ -22,6 +22,7 @@ namespace FishingFun
         private int stableFrames;
         private byte[,]? preCastColours;
         private Rectangle preCastBounds;
+        private readonly System.Diagnostics.Stopwatch diagnosticTimer = System.Diagnostics.Stopwatch.StartNew();
 
         public PixelClassifier.ClassifierMode? DetectedColour { get; private set; }
         public event EventHandler<BobberBitmapEvent> BitmapEvent;
@@ -149,6 +150,7 @@ namespace FishingFun
 
         private Candidate? FindCandidate(Bitmap frame, Rectangle area, PixelClassifier.ClassifierMode mode, bool automatic)
         {
+            var scanTimer = System.Diagnostics.Stopwatch.StartNew();
             var redPoints = new List<Point>();
             var bluePoints = new List<Point>();
             for (int x = area.Left; x < area.Right; x++)
@@ -174,6 +176,14 @@ namespace FishingFun
             var red = Score(redPoints, PixelClassifier.ClassifierMode.Red, automatic);
             var blue = Score(bluePoints, PixelClassifier.ClassifierMode.Blue, automatic);
             var best = red == null ? blue : blue == null ? red : red.Confidence >= blue.Confidence ? red : blue;
+
+            if (diagnosticTimer.ElapsedMilliseconds >= 2000)
+            {
+                string result = best == null ? "none (zero pixels, over limit, or cluster too small)" :
+                    $"{best.Colour} at {best.Point}, score={best.Confidence:F2}";
+                logger.Info($"Bobber scan: mode={mode}, area={area}, redPixels={redPoints.Count}, bluePixels={bluePoints.Count}, limit={MaxColourPoints}, preCastFilter={automatic && preCastColours != null}, candidate={result}, stableFramesBeforeUpdate={stableFrames}, scanMs={scanTimer.ElapsedMilliseconds}.");
+                diagnosticTimer.Restart();
+            }
 
             // Score original pixels before adding preview highlights.
             if (best != null)
