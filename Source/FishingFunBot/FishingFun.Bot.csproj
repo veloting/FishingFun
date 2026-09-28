@@ -41,6 +41,7 @@
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Web.Extensions" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.Xml.Linq" />
@@ -53,6 +54,8 @@
   <ItemGroup>
     <Compile Include="Bot\BobberColourPointFinder.cs" />
     <Compile Include="Bot\ClassifierMode.cs" />
+    <Compile Include="Bot\CharacterRotation.cs" />
+    <Compile Include="Bot\AutomaticRotation.cs" />
     <Compile Include="Bot\FishBot.cs" />
     <Compile Include="Bot\Interfaces\IBiteWatcher.cs" />
     <Compile Include="Bot\Interfaces\IBobberFinder.cs" />
@@ -62,6 +65,8 @@
     <Compile Include="Bot\PositionBiteWatcher.cs" />
     <Compile Include="Bot\SearchBobberFinder.cs" />
     <Compile Include="Platform\Keys.cs" />
+    <Compile Include="Platform\RotationDesktop.cs" />
+    <Compile Include="Platform\ScreenTextReader.cs" />
     <Compile Include="Platform\TimedAction.cs" />
     <Compile Include="Platform\WowProcess.cs" />
     <Compile Include="Platform\WowScreen.cs" />
@@ -69,6 +74,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+    <Content Include="Platform\RecognizeScreen.ps1">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

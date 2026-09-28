@@ -16,6 +16,12 @@ namespace FishingFun
         public static IDisposable UsePhysicalPixels() => new DpiScope();
 
         public static Rectangle GetCaptureBounds(bool requireForeground = true)
+            => GetWindowBounds(requireForeground, false);
+
+        public static Rectangle GetClientBounds(bool requireForeground = true)
+            => GetWindowBounds(requireForeground, true);
+
+        private static Rectangle GetWindowBounds(bool requireForeground, bool fullClient)
         {
             using (UsePhysicalPixels())
             using (var process = WowProcess.Get(logMissing: false))
@@ -35,17 +41,17 @@ namespace FishingFun
                 if (width < 4 || height < 4) { return Rectangle.Empty; }
 
                 // Preserve the central search area, relative to the game instead of the primary screen.
-                var bounds = new Rectangle(origin.X + width / 4, origin.Y + height / 4,
+                var bounds = fullClient ? new Rectangle(origin.X, origin.Y, width, height) : new Rectangle(origin.X + width / 4, origin.Y + height / 4,
                     width / 2, Math.Max(1, height / 2 - Math.Min(100, height / 4)));
                 return SystemInformation.VirtualScreen.Contains(bounds) ? bounds : Rectangle.Empty;
             }
         }
 
-        public static Bitmap GetBitmap(out Rectangle bounds, bool requireForeground = true)
+        public static Bitmap GetBitmap(out Rectangle bounds, bool requireForeground = true, bool fullClient = false)
         {
             using (UsePhysicalPixels())
             {
-                bounds = GetCaptureBounds(requireForeground);
+                bounds = fullClient ? GetClientBounds(requireForeground) : GetCaptureBounds(requireForeground);
                 if (bounds.IsEmpty) { throw new OperationCanceledException("Waiting for a visible, foreground WoW window."); }
                 var bitmap = new Bitmap(bounds.Width, bounds.Height);
                 try

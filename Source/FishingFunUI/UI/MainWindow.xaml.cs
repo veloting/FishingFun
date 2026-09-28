@@ -26,10 +26,18 @@ namespace FishingFun
         private bool setImageBackgroundColour = true;
         private Timer WindowSizeChangedTimer;
         private System.Threading.Thread? botThread;
+        private CharacterRotationSettings rotationSettings = new CharacterRotationSettings();
+        private readonly string rotationSettingsPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "character-rotation.xml");
 
         public MainWindow()
         {
             InitializeComponent();
+            try
+            {
+                rotationSettings = CharacterRotationSettings.Load(rotationSettingsPath);
+                ShowRotationConfiguration();
+            }
+            catch (Exception e) { RotationStatus.Text = "换号设置读取失败，请重新设置：" + e.Message; }
 
             ((Logger)FishingBot.logger.Logger).AddAppender(this);
 
@@ -86,7 +94,24 @@ namespace FishingFun
             });
         }
 
-        private void Stop_Click(object sender, RoutedEventArgs e) => bot?.Stop();
+        private void Stop_Click(object sender, RoutedEventArgs e)
+        {
+            bot?.Stop();
+            if (rotationSettings.Enabled) { RotationStatus.Text = "已请求停止；重启前请在换号设置中核对当前角色。"; }
+        }
+
+        private void ShowRotationConfiguration()
+        {
+            RotationStatus.Text = rotationSettings.Enabled ?
+                "自动换号：每个角色 " + rotationSettings.MinutesPerCharacter + " 分钟；启动前请核对当前角色。" : "自动换号：未启用";
+        }
+
+        private void RotationSettings_Click(object sender, RoutedEventArgs e)
+        {
+            if (bot != null) { return; }
+            var window = new CharacterRotationWindow(rotationSettings, rotationSettingsPath) { Owner = this };
+            if (window.ShowDialog() == true) { rotationSettings = window.Result; ShowRotationConfiguration(); }
+        }
 
         private void Settings_Click(object sender, RoutedEventArgs e) => new ColourConfiguration(this.pixelClassifier).Show();
 
@@ -143,6 +168,7 @@ namespace FishingFun
             {
                 this.Play.IsEnabled = isBotRunning;
                 this.Stop.IsEnabled = !this.Play.IsEnabled;
+                this.RotationSettings.IsEnabled = this.Play.IsEnabled;
                 SetImageVisibility(this.PlayImage, this.PlayImage_Disabled, this.Play.IsEnabled);
                 SetImageVisibility(this.StopImage, this.StopImage_Disabled, this.Stop.IsEnabled);
             });
@@ -152,8 +178,12 @@ namespace FishingFun
         {
             if (bot == null)
             {
+                try { if (rotationSettings.Enabled) { rotationSettings.Validate(); } }
+                catch (Exception error) { RotationStatus.Text = error.Message; return; }
                 SetButtonStates(false);
-                bot = new FishingBot(bobberFinder, this.biteWatcher, KeyChooser.CastKey, new List<ConsoleKey>());
+                bot = new FishingBot(bobberFinder, this.biteWatcher, KeyChooser.CastKey, new List<ConsoleKey>(), rotationSettings);
+                bot.RotationStatusChanged += message => Dispatch(() => RotationStatus.Text = message);
+                bot.RotationCharacterChanged += index => Dispatch(() => rotationSettings.StartingCharacter = index);
                 bot.FishingEventHandler += FishingEventHandler;
                 botThread = new System.Threading.Thread(new System.Threading.ThreadStart(this.BotThread)) { IsBackground = true };
                 botThread.Start();

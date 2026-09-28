@@ -21,15 +21,28 @@ namespace FishingFun
         private Rectangle captureBounds;
         private Stopwatch stopwatch = new Stopwatch();
         private static Random random = new Random();
+        private readonly CharacterRotationSettings? rotationSettings;
+        private readonly RotationSchedule? rotationSchedule;
+        private readonly Stopwatch activeFishingTime = new Stopwatch();
+        private bool rotationInitialized;
+        private DateTime nextRotationStatus;
+        public event Action<string>? RotationStatusChanged;
+        public event Action<int>? RotationCharacterChanged;
 
         public event EventHandler<FishingEvent> FishingEventHandler;
 
-        public FishingBot(IBobberFinder bobberFinder, IBiteWatcher biteWatcher, ConsoleKey castKey, List<ConsoleKey> tenMinKey)
+        public FishingBot(IBobberFinder bobberFinder, IBiteWatcher biteWatcher, ConsoleKey castKey, List<ConsoleKey> tenMinKey,
+            CharacterRotationSettings? rotationSettings = null)
         {
             this.bobberFinder = bobberFinder;
             this.biteWatcher = biteWatcher;
             this.castKey = castKey;
             this.tenMinKey = tenMinKey;
+            if (rotationSettings != null && rotationSettings.Enabled)
+            {
+                this.rotationSettings = rotationSettings;
+                rotationSchedule = new RotationSchedule(rotationSettings);
+            }
 
             logger.Info("FishBot Created.");
 
@@ -50,7 +63,9 @@ namespace FishingFun
                     captureBounds = WowScreen.GetCaptureBounds();
                     if (captureBounds.IsEmpty)
                     {
+                        activeFishingTime.Stop();
                         if (!waitingForWindow) { logger.Info("Paused: bring the WoW window to the foreground to resume."); }
+                        if (!waitingForWindow && rotationSchedule != null) { RotationStatusChanged?.Invoke("已暂停计时：请将游戏切回前台。"); }
                         waitingForWindow = true;
                         bobberFinder.Reset();
                         Thread.Sleep(100);
@@ -58,6 +73,9 @@ namespace FishingFun
                     }
                     if (waitingForWindow) { logger.Info("WoW window ready; resuming."); }
                     waitingForWindow = false;
+                    if (!PrepareRotation()) { break; }
+                    activeFishingTime.Start();
+                    UpdateRotationStatus();
                     if (initialKeysPending)
                     {
                         DoTenMinuteKey();
@@ -78,18 +96,80 @@ namespace FishingFun
                 }
                 catch (OperationCanceledException e)
                 {
+                    activeFishingTime.Stop();
                     bobberFinder.Reset();
                     if (isEnabled) { logger.Info("Detection paused/restarted: " + e.Message); }
                     Thread.Sleep(100);
                 }
                 catch (Exception e)
                 {
+                    activeFishingTime.Stop();
                     logger.Error(e.ToString());
                     for (int i = 0; i < 20 && isEnabled; i++) { Thread.Sleep(100); }
                 }
             }
 
+            activeFishingTime.Stop();
             logger.Error("Bot has Stopped.");
+        }
+
+        private bool PrepareRotation()
+        {
+            if (rotationSchedule == null || rotationSettings == null) { return true; }
+            try
+            {
+                if (!rotationInitialized)
+                {
+                    var desktop = new RotationDesktop(rotationSettings, () => isEnabled);
+                    if (rotationSettings.AutomaticDetection)
+                        new AutomaticRotationRunner(desktop, ReportRotationStatus).ConfirmWorld();
+                    else if (!desktop.Matches(rotationSettings.WorldScreen) || desktop.Matches(rotationSettings.LogoutButton) ||
+                        desktop.Matches(rotationSettings.CharacterScreen))
+                        throw new InvalidOperationException("未识别到游戏界面，请登录所选启动角色、关闭菜单后再开始。");
+                    rotationInitialized = true;
+                    RotationCharacterChanged?.Invoke(rotationSchedule.CurrentIndex);
+                }
+                if (!rotationSchedule.IsDue(activeFishingTime.Elapsed)) { return true; }
+                activeFishingTime.Stop();
+                bobberFinder.Reset();
+                if (rotationSettings.AutomaticDetection)
+                    new AutomaticRotationRunner(new RotationDesktop(rotationSettings, () => isEnabled), ReportRotationStatus)
+                        .SwitchTo(rotationSettings.Characters[rotationSchedule.NextIndex].ListPosition);
+                else
+                    new CharacterRotationRunner(rotationSettings, new RotationDesktop(rotationSettings, () => isEnabled), ReportRotationStatus)
+                        .SwitchTo(rotationSchedule.NextIndex);
+                rotationSchedule.CompleteSwitch();
+                RotationCharacterChanged?.Invoke(rotationSchedule.CurrentIndex);
+                activeFishingTime.Reset();
+                nextRotationStatus = DateTime.MinValue;
+                StartTime = DateTime.Now;
+                captureBounds = WowScreen.GetCaptureBounds();
+                return true;
+            }
+            catch (Exception e)
+            {
+                isEnabled = false;
+                string message = "自动换号已停止：" + e.Message;
+                logger.Error(message);
+                RotationStatusChanged?.Invoke(message);
+                return false;
+            }
+        }
+
+        private void UpdateRotationStatus()
+        {
+            if (rotationSchedule == null || rotationSettings == null || DateTime.UtcNow < nextRotationStatus) { return; }
+            nextRotationStatus = DateTime.UtcNow.AddSeconds(1);
+            var remaining = TimeSpan.FromMinutes(rotationSettings.MinutesPerCharacter) - activeFishingTime.Elapsed;
+            string name = rotationSettings.Characters[rotationSchedule.CurrentIndex].Name;
+            RotationStatusChanged?.Invoke(remaining <= TimeSpan.Zero ? name + "：本竿结束后换号" :
+                name + "：距换号 " + ((int)remaining.TotalMinutes).ToString("00") + ":" + remaining.Seconds.ToString("00"));
+        }
+
+        private void ReportRotationStatus(string message)
+        {
+            logger.Info(message);
+            RotationStatusChanged?.Invoke(message);
         }
 
         public void SetCastKey(ConsoleKey castKey)
@@ -202,8 +282,10 @@ namespace FishingFun
         {
             if (!isEnabled || WowScreen.GetCaptureBounds() != captureBounds)
             {
+                activeFishingTime.Stop();
                 throw new OperationCanceledException(isEnabled ? "WoW lost focus or its capture area changed." : "Stop requested.");
             }
+            UpdateRotationStatus();
         }
 
         public static void Sleep(int ms)

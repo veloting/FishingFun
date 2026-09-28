@@ -242,6 +242,34 @@ namespace FishingFun
             }
         }
 
+        public static void LeftClickMouse(System.Drawing.Point position, Func<bool> canContinue)
+        {
+            using (WowScreen.UsePhysicalPixels())
+            using (var process = Get())
+            {
+                var window = process?.MainWindowHandle ?? IntPtr.Zero;
+                var bounds = WowScreen.GetClientBounds();
+                bool CanClick() => canContinue() && window != IntPtr.Zero && !bounds.IsEmpty &&
+                    bounds.Contains(position) && WowScreen.GetClientBounds() == bounds &&
+                    GetForegroundWindow() == window && GetAncestor(WindowFromPoint(position), 2) == window &&
+                    !IsKeyHeld(0x10) && !IsKeyHeld(0x11) && !IsKeyHeld(0x12) &&
+                    !IsKeyHeld(0x5B) && !IsKeyHeld(0x5C) && !IsKeyHeld(0x01) && !IsKeyHeld(0x02);
+                if (!CanClick()) { throw new OperationCanceledException("换号点击已取消：窗口或按键状态改变。"); }
+                if (!SetCursorPos(position.X, position.Y) || !CanClick())
+                    throw new OperationCanceledException("无法定位换号按钮。");
+                SendMouseInput(0x0002);
+                try { Thread.Sleep(50); }
+                finally { SendMouseInput(0x0004); }
+            }
+        }
+
+        private static void SendMouseInput(uint flags)
+        {
+            var input = new NativeInput { Type = 0, Data = new InputData { Mouse = new MouseInput { Flags = flags } } };
+            if (SendInput(1, new[] { input }, Marshal.SizeOf(typeof(NativeInput))) != 1)
+                throw new InvalidOperationException("换号鼠标输入失败，Win32=" + Marshal.GetLastWin32Error());
+        }
+
         private static bool WaitForLootDelay(int milliseconds, Func<bool> canContinue)
         {
             var timer = Stopwatch.StartNew();

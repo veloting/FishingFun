@@ -17,6 +17,10 @@ https://www.youtube.com/watch?v=T6reHXxA5f0
 
 # Getting it working
 
+## 自动换角色（每个角色默认 90 分钟）
+
+GUI 新增「自动换号设置」：自动识别中文菜单及角色列表，只需填写轮换顺序（例如 `1,2,3`）和当前角色序号；钓鱼满设定时间后通过 ESC 菜单返回角色选择、登录下一个角色并继续钓鱼。默认无需手动定位，保留手动模式作为备用；详细步骤见 [换号使用说明](换号使用说明.md)。
+
 ## 1. Download this repository
 
 Put the contents of the repo into a folder. e.g "C:\FishingFun". I am going to refer to this folder from now on, so just substitute your own folder path.

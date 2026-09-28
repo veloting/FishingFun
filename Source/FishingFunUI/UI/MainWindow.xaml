@@ -53,6 +53,7 @@
         </Grid.ColumnDefinitions>
 
         <materialDesign:Card Grid.Column="1" Padding="5" Margin="3">
+            <StackPanel>
             <WrapPanel>
                 <Button Name="Play" Padding="0" Height="50" HorizontalAlignment="Left" Margin="10,0,0,0" VerticalAlignment="Top" Width="50" Click="Play_Click" ToolTip="Start" BorderThickness="0" Background="Transparent">
                     <StackPanel>
@@ -78,6 +79,9 @@
                     </Grid>
                 </Button>
             </WrapPanel>
+                <Button Name="RotationSettings" Content="自动换号设置" Click="RotationSettings_Click" Margin="10,5,10,2" />
+                <TextBlock Name="RotationStatus" Text="自动换号：未启用" TextWrapping="Wrap" Margin="10,4,10,4" />
+            </StackPanel>
         </materialDesign:Card>
 
         <DockPanel Name="ImageBackground" Grid.Column="0" Grid.Row="0" Margin="0" Grid.RowSpan="2" Background="Black">
