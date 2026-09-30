@@ -41,6 +41,8 @@ Once loaded click the Start button, this should build and run the project Fishin
 
 Once it has built you can run it without visual studio by navigating with File Explorer to folder C:\FishingFun\Source\bin\Debug and run by double clicking on Chrome.exe
 
+也可以双击根目录的 `Start-FishingFun.cmd`：脚本默认通过 Windows UAC 请求管理员权限，适合游戏也以管理员权限运行的情况。取消授权则不启动。若游戏以普通权限运行，可使用 `Start-FishingFun.cmd /normal` 普通启动，或直接打开 `Chrome.exe`。Windows 的 `SendInput` 不能向完整性级别比自身高的程序发送输入，因此并非所有情况下都需要管理员权限。脚本只改变本次启动权限，不修改系统 UAC 或游戏的权限设置。
+
 If you want run a version without a GUI you need to set the startup project in visual studio to FishingFun.Console by right clicking on the project in the Solution Explorer and choosing 'Set as startup project', then build (F6). You should now have C:\FishingFun\Source\bin\Debug\powershell.exe which you can run outside of visual studio.
 
 ## 4. Bot Running Instructions
