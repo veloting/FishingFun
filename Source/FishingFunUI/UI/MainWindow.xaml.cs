@@ -28,6 +28,7 @@ namespace FishingFun
         private System.Threading.Thread? botThread;
         private CharacterRotationSettings rotationSettings = new CharacterRotationSettings();
         private readonly string rotationSettingsPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "character-rotation.xml");
+        private readonly string detectionSettingsPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bobber-detection.xml");
 
         public MainWindow()
         {
@@ -44,6 +45,8 @@ namespace FishingFun
             this.DataContext = LogEntries = new ObservableCollection<LogEntry>();
             this.pixelClassifier = new PixelClassifier();
             pixelClassifier.SetConfiguration(WowProcess.IsWowClassic());
+            try { pixelClassifier.Mode = BobberDetectionSettings.LoadMode(detectionSettingsPath); }
+            catch (Exception error) { FishingBot.logger.Warn("识别模式设置读取失败，使用新版图像识别。", error); }
              
             this.bobberFinder = new SearchBobberFinder(pixelClassifier);
 
@@ -118,7 +121,8 @@ namespace FishingFun
             }
         }
 
-        private void Settings_Click(object sender, RoutedEventArgs e) => new ColourConfiguration(this.pixelClassifier).Show();
+        private void Settings_Click(object sender, RoutedEventArgs e)
+            => new ColourConfiguration(this.pixelClassifier, detectionSettingsPath) { Owner = this }.ShowDialog();
 
         private void CastKey_Click(object sender, RoutedEventArgs e) => this.KeyChooser.Focus();
 

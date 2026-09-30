@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Xml.Linq;
@@ -14,7 +15,7 @@ internal static class RotationUiSmokeTests
     {
         try
         {
-            var app = new Application();
+            var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
             var xaml = XDocument.Load(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "../../FishingFunUI/App.xaml"));
             foreach (var dictionary in xaml.Descendants().Where(n => n.Name.LocalName == "ResourceDictionary" && n.Attribute("Source") != null))
                 app.Resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri((string)dictionary.Attribute("Source")) });
@@ -32,8 +33,38 @@ internal static class RotationUiSmokeTests
             encoder.Frames.Add(BitmapFrame.Create(image));
             using (var stream = File.Create("rotation-settings-preview.png")) { encoder.Save(stream); }
             settings.Close();
+            string detectionPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ui-detection-test-" + Guid.NewGuid() + ".xml");
+            var classifier = new PixelClassifier();
+            var colours = new ColourConfiguration(classifier, detectionPath);
+            var colourContent = (FrameworkElement)colours.Content;
+            colourContent.Measure(new Size(900, 520));
+            colourContent.Arrange(new Rect(0, 0, 900, 520));
+            colourContent.UpdateLayout();
+            try
+            {
+                var modes = (ComboBox)colours.FindName("cmbColors");
+                if (modes.Items.Count != 4) { throw new Exception("Expected new image mode plus three old colour choices."); }
+                modes.SelectedValue = PixelClassifier.ClassifierMode.AutoColour;
+                if (classifier.Mode != PixelClassifier.ClassifierMode.AutoColour) { throw new Exception("UI did not apply old mode."); }
+                colourContent.UpdateLayout();
+                var preview = new RenderTargetBitmap(900, 520, 96, 96, PixelFormats.Pbgra32);
+                var colourBackground = new DrawingVisual();
+                using (var drawing = colourBackground.RenderOpen()) { drawing.DrawRectangle(Brushes.White, null, new Rect(0, 0, 900, 520)); }
+                preview.Render(colourBackground);
+                preview.Render(colourContent);
+                var colourEncoder = new PngBitmapEncoder();
+                colourEncoder.Frames.Add(BitmapFrame.Create(preview));
+                using (var stream = File.Create("colour-settings-preview.png")) { colourEncoder.Save(stream); }
+                ((Button)colours.FindName("SaveDetection")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                var restored = new PixelClassifier { Mode = BobberDetectionSettings.LoadMode(detectionPath) };
+                var reopened = new ColourConfiguration(restored, detectionPath);
+                if (!Equals(((ComboBox)reopened.FindName("cmbColors")).SelectedValue, PixelClassifier.ClassifierMode.AutoColour))
+                    throw new Exception("Saved old mode was not selected when settings reopened.");
+                reopened.Close();
+            }
+            finally { colours.Close(); if (File.Exists(detectionPath)) { File.Delete(detectionPath); } }
             app.Shutdown();
-            Console.WriteLine("PASS: Rotation settings load with application resources and render. No windows shown or game inputs sent.");
+            Console.WriteLine("PASS: Rotation and Auto image settings load with application resources and render. No windows shown or game inputs sent.");
             return 0;
         }
         catch (Exception e) { Console.Error.WriteLine(e); return 1; }

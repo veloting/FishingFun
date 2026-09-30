@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.IO;
 using FishingFun;
 
 internal static class AutoColourTests
@@ -51,7 +52,44 @@ internal static class AutoColourTests
         {
             var classifier = new PixelClassifier();
             Check(classifier.Mode == PixelClassifier.ClassifierMode.Auto, "Automatic colour is the default");
-            var finder = new SearchBobberFinder(classifier);
+            var selected = new PixelClassifier { Mode = PixelClassifier.ClassifierMode.AutoColour };
+            var selectableFinder = new SearchBobberFinder(selected);
+            using (var red = Frame(Color.Gray, g => Patch(g, Red, size: 30)))
+            using (var blue = Frame(Color.Gray, g => Patch(g, Blue)))
+            using (var empty = Frame(Color.Gray, g => { }))
+            {
+                selectableFinder.PrepareForCast(empty, Bounds);
+                Confirm(selectableFinder, red, PixelClassifier.ClassifierMode.Red);
+                selected.Mode = PixelClassifier.ClassifierMode.Auto;
+                bool restarted = false;
+                try { Find(selectableFinder, red); } catch (OperationCanceledException) { restarted = true; }
+                Check(restarted, "Switching old to new clears tracking and requests a fresh cast/bite baseline");
+                selectableFinder.PrepareForCast(empty, Bounds);
+                Check(Find(selectableFinder, red) == Point.Empty && Find(selectableFinder, red) == Point.Empty && Find(selectableFinder, red) == Point.Empty,
+                    "New mode uses appearance matching and rejects the plain patch accepted by old mode");
+                selected.Mode = PixelClassifier.ClassifierMode.AutoColour;
+                restarted = false;
+                try { Find(selectableFinder, blue); } catch (OperationCanceledException) { restarted = true; }
+                Check(restarted, "Switching back to old mode requests a fresh cast");
+                selectableFinder.PrepareForCast(empty, Bounds);
+                Confirm(selectableFinder, blue, PixelClassifier.ClassifierMode.Blue);
+            }
+            string settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "detection-test-" + Guid.NewGuid() + ".xml");
+            try
+            {
+                Check(BobberDetectionSettings.LoadMode(settingsPath) == PixelClassifier.ClassifierMode.Auto, "Missing saved mode preserves the new-mode default");
+                foreach (PixelClassifier.ClassifierMode mode in Enum.GetValues(typeof(PixelClassifier.ClassifierMode)))
+                {
+                    BobberDetectionSettings.SaveMode(settingsPath, mode);
+                    Check(BobberDetectionSettings.LoadMode(settingsPath) == mode, "Selected mode survives save/reload: " + mode);
+                }
+                File.WriteAllText(settingsPath, "<BobberDetection><Mode>999</Mode></BobberDetection>");
+                bool invalid = false;
+                try { BobberDetectionSettings.LoadMode(settingsPath); } catch (InvalidDataException) { invalid = true; }
+                Check(invalid, "Invalid stored mode cannot silently select an unintended detector");
+            }
+            finally { if (File.Exists(settingsPath)) { File.Delete(settingsPath); } }
+            var finder = new SearchBobberFinder(classifier, useTemplates: false);
             using (var red = Frame(Color.Gray, g => Patch(g, Red)))
             using (var blue = Frame(Color.Gray, g => Patch(g, Blue)))
             using (var empty = Frame(Color.Gray, g => { }))

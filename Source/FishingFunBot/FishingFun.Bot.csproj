@@ -53,6 +53,8 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Bot\BobberColourPointFinder.cs" />
+    <Compile Include="Bot\BobberTemplateMatcher.cs" />
+    <Compile Include="Bot\BobberDetectionSettings.cs" />
     <Compile Include="Bot\ClassifierMode.cs" />
     <Compile Include="Bot\CharacterRotation.cs" />
     <Compile Include="Bot\AutomaticRotation.cs" />
@@ -74,6 +76,9 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
+    <EmbeddedResource Include="..\..\post\img\fishingfun_bobbers.png">
+      <LogicalName>FishingFun.BobberTemplates.png</LogicalName>
+    </EmbeddedResource>
     <Content Include="Platform\RecognizeScreen.ps1">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

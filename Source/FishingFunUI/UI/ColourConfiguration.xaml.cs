@@ -8,6 +8,14 @@ namespace FishingFun
     public partial class ColourConfiguration : System.Windows.Window
     {
         private readonly IPixelClassifier pixelClassifier;
+        private readonly string settingsPath;
+        private sealed class ModeOption
+        {
+            public string Name { get; set; } = "";
+            public string Swatch { get; set; } = "";
+            public PixelClassifier.ClassifierMode Mode { get; set; }
+        }
+        private readonly Lazy<BobberTemplateMatcher> templateMatcher = new Lazy<BobberTemplateMatcher>(BobberTemplateMatcher.LoadDefault);
 
         private Bitmap ScreenCapture = new Bitmap(1, 1);
 
@@ -40,9 +48,10 @@ namespace FishingFun
             }
         }
 
-        public ColourConfiguration(IPixelClassifier pixelClassifier)
+        public ColourConfiguration(IPixelClassifier pixelClassifier, string? settingsPath = null)
         {
             this.pixelClassifier = pixelClassifier;
+            this.settingsPath = settingsPath ?? System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bobber-detection.xml");
             FindColourValue = 100;
 
             InitializeComponent();
@@ -51,9 +60,10 @@ namespace FishingFun
 
             cmbColors.ItemsSource = new[]
             {
-                new { Name = "Auto", Swatch = "Gray", Mode = PixelClassifier.ClassifierMode.Auto },
-                new { Name = "Red", Swatch = "Red", Mode = PixelClassifier.ClassifierMode.Red },
-                new { Name = "Blue", Swatch = "Blue", Mode = PixelClassifier.ClassifierMode.Blue }
+                new ModeOption { Name = "新版：图像识别", Swatch = "Gray", Mode = PixelClassifier.ClassifierMode.Auto },
+                new ModeOption { Name = "旧版：自动颜色", Swatch = "Purple", Mode = PixelClassifier.ClassifierMode.AutoColour },
+                new ModeOption { Name = "旧版：红色羽毛", Swatch = "Red", Mode = PixelClassifier.ClassifierMode.Red },
+                new ModeOption { Name = "旧版：蓝色羽毛", Swatch = "Blue", Mode = PixelClassifier.ClassifierMode.Blue }
             };
             cmbColors.SelectedValue = this.pixelClassifier.Mode;
             LootDelay.Value = WowProcess.LootDelay;
@@ -116,6 +126,14 @@ namespace FishingFun
 
         private void MarkHighlightOnBitmap(Bitmap bmp)
         {
+            if (pixelClassifier.Mode == PixelClassifier.ClassifierMode.Auto)
+            {
+                var match = templateMatcher.Value.Find(bmp, new Rectangle(Point.Empty, bmp.Size));
+                if (match != null && match.Score >= BobberTemplateMatcher.MinimumScore)
+                    using (var g = Graphics.FromImage(bmp))
+                    using (var pen = new Pen(Color.LimeGreen, 2)) { g.DrawRectangle(pen, match.Bounds); }
+                return;
+            }
             for (int x = 0; x < bmp.Width; x++)
             {
                 for (int y = 0; y < bmp.Height; y++)
@@ -124,7 +142,7 @@ namespace FishingFun
                     if (this.pixelClassifier.IsMatch(pixel.R, pixel.G, pixel.B))
                     {
                         bool blue = this.pixelClassifier.Mode == PixelClassifier.ClassifierMode.Blue ||
-                            (this.pixelClassifier.Mode == PixelClassifier.ClassifierMode.Auto &&
+                            (this.pixelClassifier.Mode == PixelClassifier.ClassifierMode.AutoColour &&
                             !this.pixelClassifier.IsMatch(pixel.R, pixel.G, pixel.B, PixelClassifier.ClassifierMode.Red));
                         bmp.SetPixel(x, y, blue ? Color.Blue : Color.Red);
                     }
@@ -168,9 +186,16 @@ namespace FishingFun
         {
             if (pixelClassifier.Mode == PixelClassifier.ClassifierMode.Auto)
             {
-                this.LabelColourMultiplier.Text = "Auto: choose a stable red or blue feather for each cast.";
-                this.LabelColourClosenessMultiplier.Text = "Colour sliders are optional fine-tuning if detection fails.";
+                this.LabelColourMultiplier.Text = "Auto：先用图像定位鱼漂，再追踪同一根羽毛；预览绿框为候选位置。";
+                this.LabelColourClosenessMultiplier.Text = "颜色滑块仅用于旧版颜色识别。新版连续确认后局部追踪，保留下沉动作。";
                 this.ColourLabel.Content = "Red:";
+                return;
+            }
+            if (pixelClassifier.Mode == PixelClassifier.ClassifierMode.AutoColour)
+            {
+                this.LabelColourMultiplier.Text = "旧版：按红 / 蓝颜色寻找羽毛，连续确认后跟踪同一种颜色，不进行图像匹配。";
+                this.LabelColourClosenessMultiplier.Text = "下方颜色参数对旧版生效；切换模式会重新抛竿建立基准，自动换号仍按原配置运行。";
+                this.ColourLabel.Content = "Red / Blue:";
                 return;
             }
             this.LabelColourMultiplier.Text = $"{PrimaryColor} multiplied by {this.pixelClassifier.ColourMultiplier} must be greater than green and {SecondaryColor}.";
@@ -206,13 +231,27 @@ namespace FishingFun
 
         private void cmbColors_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
         {
-            if (cmbColors.SelectedValue is PixelClassifier.ClassifierMode mode)
+            if (cmbColors.SelectedItem is ModeOption option)
             {
+                var mode = option.Mode;
                 this.pixelClassifier.Mode = mode;
                 PrimaryColor = mode == PixelClassifier.ClassifierMode.Blue ? "Blue" : "Red";
                 SecondaryColor = mode == PixelClassifier.ClassifierMode.Blue ? "red" : "blue";
                 UpdateColourText();
                 RenderColour(true);
+            }
+        }
+
+        private void Save_Click(object sender, System.Windows.RoutedEventArgs e)
+        {
+            try
+            {
+                BobberDetectionSettings.SaveMode(settingsPath, pixelClassifier.Mode);
+                Close();
+            }
+            catch (Exception error)
+            {
+                System.Windows.MessageBox.Show(this, "识别模式保存失败：" + error.Message, "保存失败");
             }
         }
     }

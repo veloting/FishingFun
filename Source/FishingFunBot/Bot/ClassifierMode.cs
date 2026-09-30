@@ -6,7 +6,8 @@
         {
             Red,
             Blue,
-            Auto
+            Auto,
+            AutoColour
         }
     }
 }

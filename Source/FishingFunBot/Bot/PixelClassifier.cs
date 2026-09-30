@@ -17,7 +17,7 @@ namespace FishingFun
         {
             bool matchesRed = isBigger(red, green) && isBigger(red, blue) && areClose(blue, green);
             bool matchesBlue = isBigger(blue, green) && isBigger(blue, red) && areClose(red, green);
-            return mode == ClassifierMode.Auto ? matchesRed || matchesBlue :
+            return mode == ClassifierMode.Auto || mode == ClassifierMode.AutoColour ? matchesRed || matchesBlue :
                 mode == ClassifierMode.Red ? matchesRed : matchesBlue;
         }
 
