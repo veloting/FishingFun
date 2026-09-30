@@ -23,8 +23,8 @@ namespace FishingFun
 
         public static bool IsWowClassic()
         {
-            var wowProcess = Get();
-            return wowProcess != null ? wowProcess.ProcessName.ToLower().Contains("classic") : false; ;
+            using (var wowProcess = Get())
+                return wowProcess != null && wowProcess.ProcessName.ToLowerInvariant().Contains("classic");
         }
 
         //Get the wow-process, if success returns the process else null
@@ -32,17 +32,40 @@ namespace FishingFun
         {
             var names = string.IsNullOrEmpty(name) ? new List<string> { "Wow", "WowClassic", "Wow-64" } : new List<string> { name };
 
-            foreach (var processName in names)
+            var matches = new List<Process>();
+            Process? selected = null;
+            try
             {
-                var matches = Process.GetProcessesByName(processName);
-                if (matches.Length == 0) { continue; }
-                for (int i = 1; i < matches.Length; i++) { matches[i].Dispose(); }
-                return matches[0];
+                foreach (var processName in names) { matches.AddRange(Process.GetProcessesByName(processName)); }
+                var windows = new List<IntPtr>();
+                foreach (var process in matches)
+                {
+                    try { windows.Add(process.MainWindowHandle); }
+                    catch (InvalidOperationException) { windows.Add(IntPtr.Zero); } // Process exited during discovery.
+                }
+                int index = SelectWindowIndex(windows, GetForegroundWindow());
+                if (index >= 0) { selected = matches[index]; }
+                else if (logMissing) { logger.Error($"Failed to find a WoW window, tried: {string.Join(", ", names)}"); }
+                return selected;
             }
+            finally
+            {
+                foreach (var process in matches)
+                    if (!ReferenceEquals(process, selected)) { process.Dispose(); }
+            }
+        }
 
-            if (logMissing) { logger.Error($"Failed to find the wow process, tried: {string.Join(", ", names)}"); }
-
-            return null;
+        // Enumerate all clients before choosing: process order and game edition do not identify the active game.
+        internal static int SelectWindowIndex(IReadOnlyList<IntPtr> windows, IntPtr foreground)
+        {
+            int fallback = -1;
+            for (int i = 0; i < windows.Count; i++)
+            {
+                if (windows[i] == IntPtr.Zero) { continue; }
+                if (windows[i] == foreground) { return i; }
+                if (fallback < 0) { fallback = i; }
+            }
+            return fallback;
         }
 
         [DllImport("user32.dll")]
