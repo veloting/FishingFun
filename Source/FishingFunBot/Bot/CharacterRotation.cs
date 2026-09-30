@@ -187,6 +187,51 @@ namespace FishingFun
         void Wait(int milliseconds);
     }
 
+    public sealed class RotationTestRunner
+    {
+        private readonly CharacterRotationSettings settings;
+        private readonly IRotationDesktop desktop;
+        private readonly Action<string> status;
+
+        public RotationTestRunner(CharacterRotationSettings settings, IRotationDesktop desktop, Action<string> status)
+        {
+            settings.Validate();
+            this.settings = settings;
+            this.desktop = desktop;
+            this.status = status;
+        }
+
+        // One real switch, independent of fishing/bite detection and the saved normal interval.
+        public int Run()
+        {
+            desktop.CheckReady();
+            AutomaticRotationRunner? automatic = null;
+            if (settings.AutomaticDetection)
+            {
+                automatic = new AutomaticRotationRunner((IAutomaticRotationDesktop)desktop, status);
+                automatic.ConfirmWorld(keepMenuOpen: true);
+            }
+            else if (!desktop.Matches(settings.WorldScreen) || desktop.Matches(settings.LogoutButton) ||
+                desktop.Matches(settings.CharacterScreen))
+                throw new InvalidOperationException("请先登录设置中的当前角色并关闭游戏菜单，再进行测试。");
+
+            int target = (settings.StartingCharacter + 1) % settings.Characters.Count;
+            var deadline = desktop.Elapsed + TimeSpan.FromSeconds(30);
+            while (desktop.Elapsed < deadline)
+            {
+                desktop.CheckReady();
+                var remaining = deadline - desktop.Elapsed;
+                status("换号测试：" + (int)Math.Ceiling(remaining.TotalSeconds) + " 秒后切换到 " + settings.Characters[target].Name + "；请保持游戏在前台。");
+                desktop.Wait(Math.Max(1, (int)Math.Min(1000, remaining.TotalMilliseconds)));
+            }
+            desktop.CheckReady();
+            status("30 秒倒计时结束，开始测试换号…");
+            if (automatic != null) { automatic.SwitchTo(settings.Characters[target].ListPosition); }
+            else { new CharacterRotationRunner(settings, desktop, status).SwitchTo(target); }
+            return target;
+        }
+    }
+
     public sealed class CharacterRotationRunner
     {
         private readonly CharacterRotationSettings settings;

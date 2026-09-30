@@ -11,6 +11,7 @@ namespace FishingFun
         public Rectangle Logout { get; set; }
         public Rectangle ReturnToGame { get; set; }
         public bool HasMenuTitle { get; set; }
+        public string MenuProblem { get; private set; } = "";
         public bool IsMenu => !Logout.IsEmpty && !ReturnToGame.IsEmpty && HasMenuTitle;
         public bool IsCharacterScreen { get; set; }
         public List<Point> Rows { get; set; } = new List<Point>();
@@ -21,11 +22,17 @@ namespace FishingFun
             Rectangle Find(string value) => text.Where(t => t.Text == value).Select(t => t.Bounds).SingleOrDefaultSafe();
             var screen = new AutomaticScreen { Logout = Find("返回角色选择"), ReturnToGame = Find("返回游戏"),
                 HasMenuTitle = text.Any(t => t.Text == "游戏菜单") };
+            if (!screen.HasMenuTitle) { screen.MenuProblem += "未识别到游戏菜单标题；"; }
+            if (screen.Logout.IsEmpty) { screen.MenuProblem += "未唯一识别到返回角色选择；"; }
+            if (screen.ReturnToGame.IsEmpty) { screen.MenuProblem += "未唯一识别到返回游戏；"; }
             // Require the three menu labels to share a column and be in the expected order.
             if (screen.IsMenu && (Math.Abs(Center(screen.Logout).X - Center(screen.ReturnToGame).X) > screen.Logout.Width / 2 ||
                 screen.ReturnToGame.Top <= screen.Logout.Bottom || !IsRedButton(frame, screen.Logout) ||
                 !IsRedButton(frame, screen.ReturnToGame)))
-            { screen.Logout = screen.ReturnToGame = Rectangle.Empty; }
+            {
+                screen.MenuProblem = "菜单按钮的排列或红色背景校验未通过；";
+                screen.Logout = screen.ReturnToGame = Rectangle.Empty;
+            }
             var server = text.Where(t => t.Text.StartsWith("选择服务") && t.Bounds.Left > frame.Width * 0.6).ToList();
             var create = text.Where(t => t.Text == "创建新角色" && t.Bounds.Left > frame.Width * 0.6).ToList();
             if (server.Count != 1 || create.Count != 1 || !IsRedButton(frame, server[0].Bounds) ||
@@ -113,19 +120,28 @@ namespace FishingFun
         public AutomaticRotationRunner(IAutomaticRotationDesktop desktop, Action<string> status)
         { this.desktop = desktop; this.status = status; }
 
-        public void ConfirmWorld(bool afterLogin = false)
+        public void ConfirmWorld(bool afterLogin = false, bool keepMenuOpen = false)
         {
-            status(afterLogin ? "等待进入游戏，自动识别游戏菜单…" : "正在自动检查游戏界面…");
+            status(afterLogin ? "等待进入游戏，自动识别游戏菜单…" :
+                keepMenuOpen ? "正在打开游戏菜单，定位“返回角色选择”…" : "正在自动检查游戏界面…");
             var deadline = desktop.Elapsed + TimeSpan.FromSeconds(afterLogin ? 180 : 25);
             var nextEscape = desktop.Elapsed + TimeSpan.FromSeconds(afterLogin ? 10 : 0);
+            string lastMenuProblem = "";
             while (desktop.Elapsed < deadline)
             {
                 var screen = desktop.ReadScreen();
+                lastMenuProblem = screen.MenuProblem;
                 if (screen.IsCharacterScreen && !afterLogin)
                     throw new InvalidOperationException("请先登录设置中指定的当前角色，再启动钓鱼。");
                 if (screen.IsMenu)
                 {
-                    desktop.Click(AutomaticScreen.Center(screen.ReturnToGame));
+                    if (keepMenuOpen)
+                    {
+                        status("已定位“返回角色选择”，保持菜单打开，倒计时结束后点击。");
+                        return;
+                    }
+                    status("已确认游戏界面，按 ESC 关闭检查菜单。");
+                    desktop.PressKey(ConsoleKey.Escape);
                     WaitFor(s => !s.HasMenuTitle && !s.IsCharacterScreen, 10, "游戏菜单未关闭");
                     desktop.Wait(1000);
                     return;
@@ -137,7 +153,8 @@ namespace FishingFun
                 }
                 desktop.Wait(500);
             }
-            throw new InvalidOperationException("未能确认已进入游戏。自动识别已停止，请检查游戏画面。");
+            throw new InvalidOperationException("菜单识别未通过，" + (afterLogin ? "尚未确认目标角色进入游戏。" : "尚未点击“返回角色选择”。") +
+                lastMenuProblem + "请查看 rotation-diagnostics 中的识别截图和文字。");
         }
 
         public void SwitchTo(int row)
@@ -146,7 +163,10 @@ namespace FishingFun
             var screen = desktop.ReadScreen();
             if (!screen.IsMenu) { desktop.PressKey(ConsoleKey.Escape); }
             screen = WaitFor(s => s.IsMenu, 12, "未识别到“返回角色选择”");
-            desktop.Click(AutomaticScreen.Center(screen.Logout));
+            var logoutPoint = AutomaticScreen.Center(screen.Logout);
+            status("正在点击“返回角色选择”：窗口内坐标 " + logoutPoint + "。");
+            desktop.Click(logoutPoint);
+            status("已发送“返回角色选择”点击，等待退出倒计时及角色列表…");
             screen = WaitFor(s => s.IsCharacterScreen && s.Rows.Count >= row, 120, "未能完整识别角色列表，请保持列表在顶部且目标角色可见");
             status("正在选择列表第 " + row + " 个角色…");
             desktop.Click(screen.Rows[row - 1]);

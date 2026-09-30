@@ -181,6 +181,7 @@ internal static class AutoColourTests
                 "SendInput structure matches the Windows ABI size");
             Check(System.Runtime.InteropServices.Marshal.OffsetOf(nativeInput, "Data").ToInt32() == (IntPtr.Size == 8 ? 8 : 4),
                 "SendInput union has the required native alignment");
+            CheckLeftClickSequence();
             Console.WriteLine("All " + checks + " fishing regression checks passed.");
             return 0;
         }
@@ -189,5 +190,37 @@ internal static class AutoColourTests
             Console.Error.WriteLine(error);
             return 1;
         }
+    }
+
+    private static void CheckLeftClickSequence()
+    {
+        var method = typeof(WowProcess).GetMethod("PerformLeftClick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        void Click(Action move, Func<bool> ready, Action<int> wait, Action<bool> send)
+        {
+            try { method.Invoke(null, new object[] { move, ready, wait, send }); }
+            catch (System.Reflection.TargetInvocationException error) { throw error.InnerException; }
+        }
+        var events = new System.Collections.Generic.List<string>();
+        Click(() => events.Add("move"), () => true, ms => events.Add("wait:" + ms), down => events.Add(down ? "down" : "up"));
+        Check(string.Join(",", events) == "move,wait:250,down,wait:120,up", "Rotation mouse settles before a full left-button press and release");
+        events.Clear();
+        bool cancelled = false;
+        try { Click(() => events.Add("move"), () => false, ms => { }, down => events.Add("button")); }
+        catch (OperationCanceledException) { cancelled = true; }
+        Check(cancelled && events.Count == 0, "Cancelled click does not move or press the mouse");
+        bool ready = true;
+        cancelled = false;
+        try { Click(() => events.Add("move"), () => ready, ms => ready = false, down => events.Add("button")); }
+        catch (OperationCanceledException) { cancelled = true; }
+        Check(cancelled && string.Join(",", events) == "move", "Focus or cursor changes during hover prevent the click");
+        events.Clear();
+        cancelled = false;
+        try
+        {
+            Click(() => { }, () => true, ms => { if (ms == 120) { throw new OperationCanceledException(); } },
+                down => events.Add(down ? "down" : "up"));
+        }
+        catch (OperationCanceledException) { cancelled = true; }
+        Check(cancelled && string.Join(",", events) == "down,up", "Interrupted button hold still releases the left mouse button");
     }
 }

@@ -1,6 +1,10 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Linq;
+using System.Text;
 using System.Threading;
 
 namespace FishingFun
@@ -12,6 +16,7 @@ namespace FishingFun
         private readonly Stopwatch clock = Stopwatch.StartNew();
         private readonly IntPtr window;
         private Rectangle lastReadBounds;
+        private TimeSpan nextDiagnostic;
         public TimeSpan Elapsed => clock.Elapsed;
 
         public RotationDesktop(CharacterRotationSettings settings, Func<bool> canContinue)
@@ -68,7 +73,23 @@ namespace FishingFun
                         throw new OperationCanceledException("识别过程中游戏窗口改变，请保持窗口稳定后重新启动。");
                 });
                 lastReadBounds = bounds;
-                return AutomaticScreen.Analyze(frame, text);
+                var screen = AutomaticScreen.Analyze(frame, text);
+                if (Elapsed >= nextDiagnostic)
+                {
+                    nextDiagnostic = Elapsed + TimeSpan.FromSeconds(3);
+                    WowProcess.logger.Info($"Rotation OCR: menu={screen.IsMenu}, title={screen.HasMenuTitle}, logout={screen.Logout}, returnToGame={screen.ReturnToGame}, characterScreen={screen.IsCharacterScreen}, rows={screen.Rows.Count}, selected={screen.SelectedRow}; {screen.MenuProblem}");
+                    try
+                    {
+                        string directory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "rotation-diagnostics");
+                        Directory.CreateDirectory(directory);
+                        frame.Save(Path.Combine(directory, "latest-screen.png"), ImageFormat.Png);
+                        File.WriteAllLines(Path.Combine(directory, "latest-ocr.txt"),
+                            new[] { DateTime.Now.ToString("O"), "Client bounds: " + bounds, "Menu: " + screen.IsMenu + "; " + screen.MenuProblem }
+                                .Concat(text.Select(t => t.Bounds + " " + t.Text)), Encoding.UTF8);
+                    }
+                    catch (Exception error) { WowProcess.logger.Warn("Could not save rotation diagnostics: " + error.Message); }
+                }
+                return screen;
             }
         }
 

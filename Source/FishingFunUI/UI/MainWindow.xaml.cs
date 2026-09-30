@@ -110,7 +110,12 @@ namespace FishingFun
         {
             if (bot != null) { return; }
             var window = new CharacterRotationWindow(rotationSettings, rotationSettingsPath) { Owner = this };
-            if (window.ShowDialog() == true) { rotationSettings = window.Result; ShowRotationConfiguration(); }
+            if (window.ShowDialog() == true)
+            {
+                rotationSettings = window.Result;
+                ShowRotationConfiguration();
+                if (window.TestRequested) { StartBot(testRotationBeforeFishing: true); }
+            }
         }
 
         private void Settings_Click(object sender, RoutedEventArgs e) => new ColourConfiguration(this.pixelClassifier).Show();
@@ -175,13 +180,16 @@ namespace FishingFun
         }
 
         private void Play_Click(object sender, RoutedEventArgs e)
+            => StartBot();
+
+        private void StartBot(bool testRotationBeforeFishing = false)
         {
             if (bot == null)
             {
-                try { if (rotationSettings.Enabled) { rotationSettings.Validate(); } }
+                try { if (rotationSettings.Enabled || testRotationBeforeFishing) { rotationSettings.Validate(); } }
                 catch (Exception error) { RotationStatus.Text = error.Message; return; }
                 SetButtonStates(false);
-                bot = new FishingBot(bobberFinder, this.biteWatcher, KeyChooser.CastKey, new List<ConsoleKey>(), rotationSettings);
+                bot = new FishingBot(bobberFinder, this.biteWatcher, KeyChooser.CastKey, new List<ConsoleKey>(), rotationSettings, testRotationBeforeFishing);
                 bot.RotationStatusChanged += message => Dispatch(() => RotationStatus.Text = message);
                 bot.RotationCharacterChanged += index => Dispatch(() => rotationSettings.StartingCharacter = index);
                 bot.FishingEventHandler += FishingEventHandler;

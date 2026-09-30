@@ -71,6 +71,24 @@ internal static class CharacterRotationTests
             Check(desktop.Elapsed.TotalSeconds >= 60 && desktop.State == "world", "Waits for logout countdown and slow loading before success");
             Check(desktop.TargetChecks >= 3, "Requires stable target selection before entering world");
 
+            desktop = new FakeDesktop(settings);
+            int testTarget = new RotationTestRunner(settings, desktop, _ => { }).Run();
+            Check(testTarget == 2 && desktop.Actions.SequenceEqual(new[] { "key:Escape", "logout", "select:2", "key:Enter" }),
+                "30 second test switches exactly once to the next configured character");
+            Check(desktop.FirstInputAt >= TimeSpan.FromSeconds(30) && desktop.FirstInputAt < TimeSpan.FromSeconds(31),
+                "Switch starts after 30 seconds plus the normal stable-screen check");
+            Check(settings.MinutesPerCharacter == 90 && settings.StartingCharacter == 1,
+                "One-shot test preserves the normal interval and source settings");
+            desktop = new FakeDesktop(settings) { CancelAt = TimeSpan.FromSeconds(12) };
+            Throws<OperationCanceledException>(() => new RotationTestRunner(settings, desktop, _ => { }).Run(),
+                "Stop or focus loss during countdown cancels the test");
+            Check(desktop.Actions.Count == 0, "Cancelled countdown never logs out");
+            desktop = new FakeDesktop(settings) { State = "selection" };
+            Throws<InvalidOperationException>(() => new RotationTestRunner(settings, desktop, _ => { }).Run(),
+                "Test rejects starting outside the logged-in world");
+            Check(desktop.Actions.Count == 0, "Invalid starting screen sends no input");
+            CheckFishingAfterTest();
+
             desktop = new FakeDesktop(settings) { WrongSelection = true };
             Throws<InvalidOperationException>(() => new CharacterRotationRunner(settings, desktop, _ => { }).SwitchTo(1), "Wrong selected character stops the workflow");
             Check(!desktop.Actions.Contains("key:Enter"), "Never logs in when target selection cannot be verified");
@@ -121,6 +139,52 @@ internal static class CharacterRotationTests
         catch (Exception e) { Console.Error.WriteLine(e); return 1; }
     }
 
+    private static void CheckFishingAfterTest()
+    {
+        var flags = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var run = typeof(FishingBot).GetMethod("RunRotationTest", flags);
+        bool Run(FishingBot bot, Func<int> operation) => (bool)run.Invoke(bot, new object[] { operation });
+        T Field<T>(FishingBot bot, string name) => (T)typeof(FishingBot).GetField(name, flags).GetValue(bot);
+        var settings = Settings();
+        settings.StartingCharacter = 1;
+        var finder = new FakeFinder();
+        var bot = new FishingBot(finder, new PositionBiteWatcher(7), ConsoleKey.D4, new List<ConsoleKey>(), settings, true);
+        int changedTo = -1;
+        bot.RotationCharacterChanged += index => changedTo = index;
+        var desktop = new FakeDesktop(settings);
+        Check(Run(bot, () => new RotationTestRunner(settings, desktop, _ => { }).Run()) &&
+            Field<bool>(bot, "isEnabled") && changedTo == 2,
+            "Successful test leaves fishing enabled on the confirmed new character");
+        var schedule = Field<RotationSchedule>(bot, "rotationSchedule");
+        Check(schedule.CurrentIndex == 2 && schedule.NextIndex == 0 && !schedule.IsDue(TimeSpan.FromSeconds(30)) &&
+            schedule.IsDue(TimeSpan.FromMinutes(90)), "Post-test rotation uses the new character and the normal 90 minute interval");
+        Check(Field<bool>(bot, "rotationInitialized") && finder.Resets == 1 && finder.Finds == 0,
+            "Confirmed login resets detection and avoids repeating startup checks before fishing");
+
+        settings.Enabled = false;
+        bot = new FishingBot(new FakeFinder(), new PositionBiteWatcher(7), ConsoleKey.D4, new List<ConsoleKey>(), settings, true);
+        Check(Run(bot, () => 2) && Field<bool>(bot, "isEnabled") && Field<RotationSchedule>(bot, "rotationSchedule") == null,
+            "With rotation disabled, a successful test continues fishing without scheduling another switch");
+        foreach (var error in new Exception[] { new InvalidOperationException("Login failed"), new OperationCanceledException() })
+        {
+            bot = new FishingBot(new FakeFinder(), new PositionBiteWatcher(7), ConsoleKey.D4, new List<ConsoleKey>(), settings, true);
+            changedTo = -1;
+            bot.RotationCharacterChanged += index => changedTo = index;
+            Check(!Run(bot, () => { throw error; }) && !Field<bool>(bot, "isEnabled") && changedTo == -1,
+                "Failed or cancelled test cannot start fishing or advance the current character: " + error.GetType().Name);
+        }
+        bot = new FishingBot(new FakeFinder(), new PositionBiteWatcher(7), ConsoleKey.D4, new List<ConsoleKey>(), settings, true);
+        Check(!Run(bot, () => { bot.Stop(); return 2; }) && !Field<bool>(bot, "isEnabled"),
+            "Stop at the end of login is honored instead of restarting fishing");
+    }
+
+    private sealed class FakeFinder : IBobberFinder
+    {
+        public int Finds, Resets;
+        public Point Find() { Finds++; return Point.Empty; }
+        public void Reset() { Resets++; }
+    }
+
     private sealed class FakeDesktop : IRotationDesktop
     {
         private readonly CharacterRotationSettings settings;
@@ -133,6 +197,7 @@ internal static class CharacterRotationTests
         public TimeSpan CancelAt = TimeSpan.MaxValue;
         public List<string> Actions = new List<string>();
         public TimeSpan Elapsed { get; private set; }
+        public TimeSpan? FirstInputAt;
 
         public FakeDesktop(CharacterRotationSettings settings) { this.settings = settings; }
         public void CheckReady()
@@ -168,6 +233,7 @@ internal static class CharacterRotationTests
         public void PressKey(ConsoleKey key)
         {
             CheckReady();
+            if (FirstInputAt == null) { FirstInputAt = Elapsed; }
             Actions.Add("key:" + key);
             if (key == ConsoleKey.Escape && State == "world") { State = "menu"; }
             else if (key == ConsoleKey.Enter && State == "selection")

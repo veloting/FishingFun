@@ -27,6 +27,10 @@ internal static class AutomaticRotationTests
                 Check(screen.IsMenu, "Windows OCR recognizes the supplied ESC menu photo");
                 var point = AutomaticScreen.Center(screen.Logout);
                 Check(point.X > 250 && point.X < 400 && point.Y > 550 && point.Y < 585, "Logout point is inside the correct button, not Exit Game");
+                var photoDesktop = new FakeDesktop { MenuScreen = screen };
+                new AutomaticRotationRunner(photoDesktop, _ => { }).SwitchTo(2);
+                Check(photoDesktop.Clicks[0] == point && !photoDesktop.Clicks.Contains(AutomaticScreen.Center(screen.ReturnToGame)),
+                    "Real photo recognition clicks Return to Character Selection and never Return to Game");
                 using (var moved = new Bitmap(1200, 900))
                 {
                     using (var g = Graphics.FromImage(moved))
@@ -63,7 +67,7 @@ internal static class AutomaticRotationTests
             Throws<InvalidOperationException>(settings.Validate, "Duplicate automatic row numbers are rejected");
             var desktop = new FakeDesktop();
             new AutomaticRotationRunner(desktop, _ => { }).SwitchTo(2);
-            Check(desktop.Actions.SequenceEqual(new[] { "Escape", "logout", "row2", "Enter", "Escape", "resume" }), "Automatic flow verifies menu, target selection, and loaded world in order");
+            Check(desktop.Actions.SequenceEqual(new[] { "Escape", "logout", "row2", "Enter", "Escape", "Escape" }), "Automatic flow verifies menu, target selection, and loaded world in order");
             Check(desktop.Elapsed.TotalSeconds >= 30, "Waits for delayed login before resuming fishing");
             desktop = new FakeDesktop { WrongSelection = true };
             Throws<InvalidOperationException>(() => new AutomaticRotationRunner(desktop, _ => { }).SwitchTo(2), "Wrong selection aborts automatic flow");
@@ -73,34 +77,65 @@ internal static class AutomaticRotationTests
             desktop = new FakeDesktop { State = "selection" };
             Throws<InvalidOperationException>(() => new AutomaticRotationRunner(desktop, _ => { }).ConfirmWorld(), "Startup on character selection stops before fishing");
             Check(desktop.Actions.Count == 0, "Startup failure sends no keys");
+            desktop = new FakeDesktop { State = "menu", MenuScreen = new AutomaticScreen { HasMenuTitle = true } };
+            Throws<InvalidOperationException>(() => new AutomaticRotationRunner(desktop, _ => { }).ConfirmWorld(keepMenuOpen: true),
+                "A menu title without a verified logout button times out before clicking");
+            Check(desktop.Clicks.Count == 0, "Incomplete menu recognition never sends a mouse click");
+            settings.Characters[1].ListPosition = 2;
+            desktop = new FakeDesktop();
+            var countdown = new List<string>();
+            int testTarget = new RotationTestRunner(settings, desktop, countdown.Add).Run();
+            Check(testTarget == 1 && desktop.Actions.SequenceEqual(new[] { "Escape", "logout", "row2", "Enter", "Escape", "Escape" }),
+                "One-shot automatic test confirms startup, switches once, and confirms the loaded target");
+            Check(desktop.Clicks[0] == AutomaticScreen.Center(desktop.MenuScreen.Logout) && !desktop.Actions.Contains("resume"),
+                "Test keeps the menu open and its first click is logout, never Return to Game");
+            Check(desktop.LogoutAt >= TimeSpan.FromSeconds(30), "Test waits the full countdown before clicking logout");
+            desktop = new FakeDesktop { State = "menu" };
+            new RotationTestRunner(settings, desktop, _ => { }).Run();
+            Check(desktop.Actions[0] == "logout", "An already-open menu is kept open until the test clicks logout");
+            Check(countdown.Any(s => s.Contains("30 秒后")) && countdown.Any(s => s.Contains("1 秒后")),
+                "Automatic test reports the 30 second countdown through the final second");
+            desktop = new FakeDesktop { CancelAt = TimeSpan.FromSeconds(12) };
+            Throws<OperationCanceledException>(() => new RotationTestRunner(settings, desktop, _ => { }).Run(),
+                "Automatic test can be cancelled during countdown");
+            Check(!desktop.Actions.Contains("logout"), "Cancelled automatic test never logs out");
+            Check(desktop.Clicks.Count == 0, "Countdown cancellation sends no clicks to either menu button");
             Console.WriteLine("All automatic rotation checks passed. No game input was sent.");
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
 
-    private sealed class FakeDesktop : IAutomaticRotationDesktop
+    private sealed class FakeDesktop : IAutomaticRotationDesktop, IRotationDesktop
     {
         public TimeSpan Elapsed { get; private set; }
         public TimeSpan CancelAt = TimeSpan.MaxValue;
         public string State = "world";
         public bool WrongSelection;
         public List<string> Actions = new List<string>();
+        public List<Point> Clicks = new List<Point>();
+        public TimeSpan LogoutAt;
+        public AutomaticScreen MenuScreen = new AutomaticScreen { HasMenuTitle = true,
+            Logout = new Rectangle(100, 100, 50, 20), ReturnToGame = new Rectangle(100, 200, 50, 20) };
         private TimeSpan transition;
         private int selected = 1;
+        public void CheckReady() { Wait(0); }
+        public bool Matches(ScreenMarker marker) { throw new NotSupportedException(); }
+        public void Click(ScreenMarker marker) { throw new NotSupportedException(); }
         public AutomaticScreen ReadScreen()
         {
             Wait(100);
-            if (State == "menu") { return new AutomaticScreen { HasMenuTitle = true, Logout = new Rectangle(100, 100, 50, 20), ReturnToGame = new Rectangle(100, 200, 50, 20) }; }
+            if (State == "menu") { return MenuScreen; }
             if (State == "selection") { return new AutomaticScreen { IsCharacterScreen = true, Rows = new List<Point> { new Point(500, 100), new Point(500, 200) }, SelectedRow = WrongSelection ? 1 : selected }; }
             return new AutomaticScreen();
         }
         public void Click(Point point)
         {
             Wait(0);
-            if (point == new Point(125, 110) && State == "menu")
-            { Actions.Add("logout"); State = "logout"; transition = Elapsed + TimeSpan.FromSeconds(3); }
-            else if (point == new Point(125, 210) && State == "menu") { Actions.Add("resume"); State = "world"; }
+            Clicks.Add(point);
+            if (point == AutomaticScreen.Center(MenuScreen.Logout) && State == "menu")
+            { Actions.Add("logout"); LogoutAt = Elapsed; State = "logout"; transition = Elapsed + TimeSpan.FromSeconds(3); }
+            else if (point == AutomaticScreen.Center(MenuScreen.ReturnToGame) && State == "menu") { Actions.Add("resume"); State = "world"; }
             else if (point == new Point(500, 200) && State == "selection") { Actions.Add("row2"); selected = 2; }
             else { throw new Exception("Unexpected click"); }
         }
@@ -109,6 +144,7 @@ internal static class AutomaticRotationTests
             Wait(0);
             Actions.Add(key.ToString());
             if (key == ConsoleKey.Escape && State == "world") { State = "menu"; }
+            else if (key == ConsoleKey.Escape && State == "menu") { State = "world"; }
             else if (key == ConsoleKey.Enter && State == "selection") { State = "loading"; transition = Elapsed + TimeSpan.FromSeconds(30); }
             else if (key == ConsoleKey.Escape && State == "loading") { Actions.RemoveAt(Actions.Count - 1); }
             else { throw new Exception("Unexpected key"); }

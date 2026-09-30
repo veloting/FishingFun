@@ -287,18 +287,35 @@ namespace FishingFun
             {
                 var window = process?.MainWindowHandle ?? IntPtr.Zero;
                 var bounds = WowScreen.GetClientBounds();
+                bool positioned = false;
                 bool CanClick() => canContinue() && window != IntPtr.Zero && !bounds.IsEmpty &&
                     bounds.Contains(position) && WowScreen.GetClientBounds() == bounds &&
                     GetForegroundWindow() == window && GetAncestor(WindowFromPoint(position), 2) == window &&
+                    (!positioned || System.Windows.Forms.Cursor.Position == position) &&
                     !IsKeyHeld(0x10) && !IsKeyHeld(0x11) && !IsKeyHeld(0x12) &&
                     !IsKeyHeld(0x5B) && !IsKeyHeld(0x5C) && !IsKeyHeld(0x01) && !IsKeyHeld(0x02);
-                if (!CanClick()) { throw new OperationCanceledException("换号点击已取消：窗口或按键状态改变。"); }
-                if (!SetCursorPos(position.X, position.Y) || !CanClick())
-                    throw new OperationCanceledException("无法定位换号按钮。");
-                SendMouseInput(0x0002);
-                try { Thread.Sleep(50); }
-                finally { SendMouseInput(0x0004); }
+                PerformLeftClick(() =>
+                {
+                    if (!SetCursorPos(position.X, position.Y)) { throw new OperationCanceledException("无法定位换号按钮。"); }
+                    positioned = true;
+                    logger.Info($"Rotation mouse positioned: screen={position}, window={window}; waiting 250ms before left click.");
+                }, CanClick, Thread.Sleep, down =>
+                {
+                    SendMouseInput(down ? 0x0002u : 0x0004u);
+                    logger.Info($"Rotation left button {(down ? "DOWN" : "UP")} input accepted: screen={position}. Game response is not yet confirmed.");
+                });
             }
+        }
+
+        internal static void PerformLeftClick(Action move, Func<bool> canClick, Action<int> wait, Action<bool> sendButton)
+        {
+            if (!canClick()) { throw new OperationCanceledException("换号点击已取消：窗口或按键状态改变。"); }
+            move();
+            // Allow the game to process cursor movement and hover before pressing the button.
+            wait(250);
+            if (!canClick()) { throw new OperationCanceledException("鼠标移动后状态改变，尚未发送左键；请保持鼠标和游戏窗口不动。"); }
+            try { sendButton(true); wait(120); }
+            finally { sendButton(false); }
         }
 
         private static void SendMouseInput(uint flags)

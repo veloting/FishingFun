@@ -32,20 +32,24 @@ namespace FishingFun
         private int missingBobbers;
         private int lockedBobbers;
         private readonly Stopwatch castElapsed = new Stopwatch();
+        private readonly bool testRotationBeforeFishing;
 
         public event EventHandler<FishingEvent> FishingEventHandler;
 
         public FishingBot(IBobberFinder bobberFinder, IBiteWatcher biteWatcher, ConsoleKey castKey, List<ConsoleKey> tenMinKey,
-            CharacterRotationSettings? rotationSettings = null)
+            CharacterRotationSettings? rotationSettings = null, bool testRotationBeforeFishing = false)
         {
             this.bobberFinder = bobberFinder;
             this.biteWatcher = biteWatcher;
             this.castKey = castKey;
             this.tenMinKey = tenMinKey;
-            if (rotationSettings != null && rotationSettings.Enabled)
+            this.testRotationBeforeFishing = testRotationBeforeFishing;
+            if (testRotationBeforeFishing && rotationSettings == null) { throw new ArgumentNullException(nameof(rotationSettings)); }
+            if (rotationSettings != null && (rotationSettings.Enabled || testRotationBeforeFishing))
             {
                 this.rotationSettings = rotationSettings;
-                rotationSchedule = new RotationSchedule(rotationSettings);
+                rotationSettings.Validate();
+                if (rotationSettings.Enabled) { rotationSchedule = new RotationSchedule(rotationSettings); }
             }
 
             logger.Info("FishBot Created.");
@@ -55,6 +59,13 @@ namespace FishingFun
 
         public void Start()
         {
+            if (testRotationBeforeFishing && !RunRotationTest(() =>
+            {
+                while (isEnabled && WowScreen.GetClientBounds().IsEmpty) { Thread.Sleep(100); }
+                if (!isEnabled) { throw new OperationCanceledException(); }
+                var desktop = new RotationDesktop(rotationSettings!, () => isEnabled);
+                return new RotationTestRunner(rotationSettings!, desktop, ReportRotationStatus).Run();
+            })) { return; }
             biteWatcher.FishingEventHandler = (e) => FishingEventHandler?.Invoke(this, e);
 
             bool initialKeysPending = true;
@@ -118,6 +129,34 @@ namespace FishingFun
 
             activeFishingTime.Stop();
             logger.Info($"Bot has Stopped. Attempts={castAttempt}, bobberLocks={lockedBobbers}, noBobberTimeouts={missingBobbers} (not catch counts).");
+        }
+
+        internal bool RunRotationTest(Func<int> switchCharacter)
+        {
+            try
+            {
+                ReportRotationStatus("30 秒换号测试：请切回已登录的当前角色，等待游戏界面确认；可按停止取消。");
+                if (!isEnabled) { throw new OperationCanceledException(); }
+                int target = switchCharacter();
+                if (!isEnabled) { throw new OperationCanceledException(); }
+                rotationSchedule?.CompleteSwitch();
+                rotationInitialized = true;
+                activeFishingTime.Reset();
+                nextRotationStatus = DateTime.MinValue;
+                StartTime = DateTime.Now;
+                bobberFinder.Reset();
+                RotationCharacterChanged?.Invoke(target);
+                ReportRotationStatus("换号测试成功：已进入 " + rotationSettings!.Characters[target].Name + "，正在自动开始钓鱼。" +
+                    (rotationSchedule != null ? "下次换号将在钓鱼满 " + rotationSettings.MinutesPerCharacter + " 分钟后执行。" : "自动轮换未启用，将在当前角色持续钓鱼。"));
+                return true;
+            }
+            catch (OperationCanceledException e)
+            {
+                ReportRotationStatus(isEnabled ? "换号测试已中止：" + e.Message + " 请核对当前角色后重试。" : "换号测试已取消。");
+            }
+            catch (Exception e) { ReportRotationStatus("换号测试失败：" + e.Message); }
+            isEnabled = false;
+            return false;
         }
 
         private bool PrepareRotation()

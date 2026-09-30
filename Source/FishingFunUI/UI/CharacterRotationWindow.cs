@@ -32,6 +32,7 @@ namespace FishingFun
         private readonly System.Collections.Generic.List<TextBlock> markerStates = new System.Collections.Generic.List<TextBlock>();
         private bool closed;
         public CharacterRotationSettings Result { get; }
+        public bool TestRequested { get; private set; }
 
         public CharacterRotationWindow(CharacterRotationSettings original, string settingsPath)
         {
@@ -125,7 +126,8 @@ namespace FishingFun
                 RefreshCharacters(0);
                 feedback.Text = "已清空本次设置中的定位，可按新的窗口尺寸重新录制；保存后生效。";
             }));
-            AddRow(Button("保存", Save), Button("取消", () => Close()));
+            AddText("快速验证：点击“保存并测试（30 秒）”，切回已登录的当前角色。自动模式打开并保留 ESC 菜单，30 秒后换到下一个角色，登录成功后自动开始钓鱼。后续按正常分钟间隔轮换；未启用轮换则在当前角色持续钓鱼。测试失败会停止。请保持游戏在前台，可按主窗口停止。", false);
+            AddRow(Button("保存", () => Save()), Button("保存并测试（30 秒）", () => Save(true)), Button("取消", () => Close()));
             RefreshCharacters(Result.StartingCharacter);
         }
 
@@ -239,7 +241,7 @@ namespace FishingFun
             characters.SelectedIndex = target;
         }
 
-        private void Save()
+        private void Save(bool test = false)
         {
             try
             {
@@ -257,8 +259,9 @@ namespace FishingFun
                     Result.StartingCharacter = positions.IndexOf(current);
                 }
                 else { Result.StartingCharacter = startingCharacter.SelectedIndex; }
-                if (Result.Enabled) { Result.Validate(); }
+                if (Result.Enabled || test) { Result.Validate(); }
                 Result.Save(settingsPath);
+                TestRequested = test;
                 DialogResult = true;
             }
             catch (Exception e) { feedback.Text = e.Message; }
